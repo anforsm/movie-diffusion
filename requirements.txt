@@ -1,0 +1,9 @@
+torch
+torchvision
+torchaudio
+matplotlib
+tqdm
+einops
+pillow
+numpy
+datasets
