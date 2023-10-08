@@ -7,3 +7,4 @@ einops
 pillow
 numpy
 datasets
+denoising_diffusion_pytorch
