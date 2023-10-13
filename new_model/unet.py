@@ -8,7 +8,8 @@ class SinusoidalPositionalEncoding(nn.Module):
         self.dim = dim
 
     def forward(self, t):
-        inv_freq = 1.0 / (10000 ** (torch.arange(0, self.dim, 2).float() / self.dim))
+        device = t.device
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, self.dim, 2, device=device).float() / self.dim))
         sin_enc = torch.sin(t.repeat(1, self.dim // 2) * inv_freq)
         cos_enc = torch.cos(t.repeat(1, self.dim // 2) * inv_freq)
         pos_enc = torch.cat([sin_enc, cos_enc], dim=-1)
@@ -23,6 +24,7 @@ class ConvBlock(nn.Module):
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=3,
+            padding="same",
         )
 
         # Add GroupNorm according to DDPM paper
@@ -38,6 +40,7 @@ class ConvBlock(nn.Module):
         x = self.norm(x)
         x = self.act(x)
         return x
+
 
 # Using Transformer and Encoder
 class SelfAttentionBlock(nn.Module):
@@ -74,8 +77,14 @@ class DownBlock(nn.Module):
     for downsampling. At each downsampling step we double the number of feature channels.'
     """
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, time_embedding_dim):
+        """in_channels will typically be half of out_channels"""
         super().__init__()
+
+        self.time_embedding_layer = nn.Sequential(
+            nn.Linear(time_embedding_dim, out_channels),
+            nn.ReLU(),
+        )
 
         self.conv1 = ConvBlock(
             in_channels=in_channels,
@@ -92,11 +101,18 @@ class DownBlock(nn.Module):
             stride=2,
         )
 
-    def forward(self, x):
+    def forward(self, x, t):
         x = self.conv1(x)
         x = self.conv2(x)
+        residual = x
         x = self.downsample(x)
-        return x
+        t = self.time_embedding_layer(t)
+        # t: (batch_size, time_embedding_dim) = (batch_size, out_channels)
+        # x: (batch_size, out_channels, height, width)
+        # we repeat the time embedding to match the shape of x
+        t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
+        x = x + t 
+        return x, residual
 
 
 class UpBlock(nn.Module):
@@ -108,18 +124,28 @@ class UpBlock(nn.Module):
     each followed by a ReLU.
     """
 
-    def __init__(self, in_channels, out_channels, residual=None):
+    def __init__(self, in_channels, out_channels, time_embedding_dim):
+        """in_channels will typically be double of out_channels
+        """
         super().__init__()
 
-        self.upsample = nn.Upsample(in_channels, scale_factor=2)
+        self.time_embedding_layer = nn.Sequential(
+            nn.Linear(time_embedding_dim, out_channels),
+            nn.ReLU(),
+        )
+
+        self.upsample = nn.Upsample(scale_factor=2)
         self.up_conv = nn.Conv2d(
+            # double the number of input channels, since we concatenate
+            # the channels with those from the residual
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=2,
+            padding="same"
         )
 
         self.conv1 = ConvBlock(
-            in_channels=out_channels,
+            in_channels=in_channels,
             out_channels=out_channels,
         )
 
@@ -128,13 +154,38 @@ class UpBlock(nn.Module):
             out_channels=out_channels,
         )
 
-    def forward(self, x):
+    def forward(self, x, t, residual=None):
         x = self.upsample(x)
         x = self.up_conv(x)
 
-        if self.residual is not None:
-            x = torch.cat([x, self.residual], dim=1)
+        if residual is not None:
+            x = torch.cat([x, residual], dim=1)
 
+        x = self.conv1(x)
+        x = self.conv2(x)
+
+        t = self.time_embedding_layer(t)
+        # t: (batch_size, time_embedding_dim) = (batch_size, out_channels)
+        # x: (batch_size, out_channels, height, width)
+        # we repeat the time embedding to match the shape of x
+        t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
+        x = x + t
+        return x
+
+class Bottleneck(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.channels = channels
+        self.conv1 = ConvBlock(
+            in_channels=channels,
+            out_channels=channels*2,
+        )
+        self.conv2 = ConvBlock( 
+            in_channels=channels*2,
+            out_channels=channels*2,
+        )
+    
+    def forward(self, x):
         x = self.conv1(x)
         x = self.conv2(x)
         return x
@@ -144,72 +195,81 @@ class Unet(nn.Module):
     def __init__(
         self,
         image_channels,
+        time_embedding_dim=128,
     ):
         super().__init__()
         self.image_channels = image_channels
-        self.time_encoding = SinusoidalPositionalEncoding(dim=2)
+        self.time_encoding = SinusoidalPositionalEncoding(dim=time_embedding_dim)
 
-        starting_channels = 64
         # Wide U-Net, i.e. num channels are increased as we celntract
-
-        self.input_layer = nn.Sequential(
-            nn.Conv2d(
-                in_channels=image_channels,
-                out_channels=starting_channels,
-                kernel_size=3,
-            ),
-            nn.ReLU(),
-        )
-
-        channels_list = [
+        starting_channels = 64
+        channels_list_down = [
             # (image_channels, starting_channels),
-            (starting_channels, starting_channels * 2),
-            (starting_channels * 2, starting_channels * 4),
-            (starting_channels * 4, starting_channels * 8),
-            (starting_channels * 8, starting_channels * 16),
-            (starting_channels * 16, starting_channels * 32),
+            (3, 64),
+            (64, 128),
+            (128, 256),
+            #(starting_channels * 4, starting_channels * 8),
+        ]
+
+        channels_list_up = [
+            #(starting_channels * 8 * 2, starting_channels * 4 * 2),
+            (512, 256),
+            (256, 128),
+            (128, 64),
         ]
 
         self.contracting_path = nn.ModuleList(
             [
-                DownBlock(in_channels=in_channels, out_channels=out_channels)
-                for in_channels, out_channels in channels_list
+                DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim)
+                for in_channels, out_channels in channels_list_down
             ]
         )
 
-        self.bottleneck = lambda x: x
+        self.bottleneck = Bottleneck(channels=channels_list_down[-1][-1]) 
 
         self.expansive_path = nn.ModuleList(
             [
-                UpBlock(in_channels=in_channels, out_channels=out_channels)
-                for out_channels, in_channels in reversed(channels_list)
+                # multiply by 2 since we concatenate the channels from the contracting path
+                # also because of bottleneck doubling the channels
+                UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim)
+                for in_channels, out_channels in channels_list_up
             ]
         )
 
-        self.output_layer = nn.Sequential(
+        self.head = nn.Sequential(
             nn.Conv2d(
                 in_channels=starting_channels,
                 out_channels=image_channels,
-                kernel_size=3,
-            ),
-            nn.ReLU(),
+                kernel_size=1,
+                padding="same",
+            )
         )
 
     def forward(self, x, t):
+        # x: (batch_size, height, width, channels)
+        x = torch.einsum("bhwc->bchw", x)
+        # x: (batch_size, channels, height, width)
         t = self.time_encoding(t)
 
         contracting_residuals = []
-        x = self.input_layer(x)
+        # x: (1, 3, 120, 80)
+        # x: (1, 64, 120, 80)
+        # x: (1, 128, 60, 40)
+        # x: (1, 256, 30, 20)
+        # x: (1, 512, 15, 10)
         for contracting_block in self.contracting_path:
-            x = contracting_block(x)
-            contracting_residuals.append(x)
+            x, residual = contracting_block(x, t)
+            contracting_residuals.append(residual)
 
         x = self.bottleneck(x)
 
         for expansive_block, residual in zip(
             self.expansive_path, reversed(contracting_residuals)
         ):
-            x = expansive_block(x, residual)
+            x = expansive_block(x, t, residual)
 
-        x = self.output_layer(x)
+        x = self.head(x)
+        # x: (1, 3, 120, 80)
+        x = torch.einsum("bchw->bhwc", x)
+        # x: (1, 120, 80, 3)
         return x

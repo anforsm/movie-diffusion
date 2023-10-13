@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from tqdm import tqdm
 from PIL import Image
 
 class GaussianDiffusion:
@@ -65,6 +66,28 @@ class GaussianDiffusion:
   def denormalize_image(x):
     # denormalize image to [0, 255]
     return (x + 1.0) / 2.0 * 255.0
+  
+  def sample(self, num_samples):
+    """
+    Sample from the model
+    """
+    self.model.eval()
+    image_versions = []
+    with torch.no_grad():
+      x = torch.randn(1, *self.image_size, 3)
+      for t in tqdm(reversed(range(self.noise_steps)), total=self.noise_steps):
+        image_versions.append(self.denormalize_image(torch.clip(x, -1, 1)).clone().squeeze(0))
+        t_ = torch.tensor([t])
+        predicted_noise = self.model(x, t_)
+        x = predicted_noise
+        #alpha = self.alphas[t]
+        #alpha_hat = self.alpha_hat[t]
+        #beta = self.betas[t]
+        #z = torch.randn_like(x) if t == 0 else torch.zeros_like(x)
+        #x = 1 / torch.sqrt(alpha) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * predicted_noise) + torch.sqrt(beta) * z 
+    self.model.train()
+    x = torch.clip(x, -1.0, 1.0)
+    return self.denormalize_image(x), image_versions
 
 class DiffusionImageAPI:
   def __init__(self, diffusion_model):
@@ -84,3 +107,6 @@ class DiffusionImageAPI:
     time_steps: the number of time steps to apply noise (int)
     """
     return [self.get_noisy_image(image, t) for t in time_steps]
+  
+  def tensor_to_image(self, tensor):
+    return Image.fromarray(tensor.numpy().astype(np.uint8))
