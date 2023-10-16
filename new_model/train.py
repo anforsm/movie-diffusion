@@ -9,9 +9,9 @@ from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
 def train():
-  batch_size = 1
+  batch_size = 2
   dataloader = torch.utils.data.DataLoader(
-    ImageDataset(),
+    ImageDataset(size=1024),
     batch_size=batch_size,
     shuffle=False,
   ) 
@@ -36,7 +36,7 @@ def train():
   optimizer = optim.Adam(model.parameters(), lr=1e-4)
   criterion = nn.MSELoss()
 
-  epochs = int(5000)
+  epochs = int(10000)
   pbar = tqdm(range(epochs))
   device = "cpu"
   model.to(device)
@@ -44,27 +44,26 @@ def train():
   for epoch in pbar:
     acc_loss = 0.0
     for image in dataloader:
+      # (batch_size, image_width, image_height, channels)
       image = diffusion.normalize_image(image)
       t = diffusion.sample_time_steps(batch_size)
-      if epoch == epoch_test:
-        t = torch.tensor([255])
-      noisy_image = diffusion.apply_noise(image, t)
+      #if epoch == epoch_test:
+      #  t = torch.tensor([1023])
+      noisy_image, noise_added_to_image = diffusion.apply_noise(image, t)
 
       noisy_image = noisy_image.to(device)
       t = t.to(device)
-      predicted_noise = model(noisy_image, t)
 
+      predicted_noise_added_to_image = model(noisy_image, t)
 
-      if epoch == epoch_test:
-        print(t)
-        print(noisy_image.shape)
-        diffusionAPI.tensor_to_image(diffusion.denormalize_image(noisy_image.squeeze(0))).save("noisy_image.png")
-        print(predicted_noise.shape)
-        copy = predicted_noise.clone().detach().cpu()
-        diffusionAPI.tensor_to_image(diffusion.denormalize_image(copy.squeeze(0))).save("predicted_image.png")
+      #if epoch == epoch_test:
+      #  diffusionAPI.tensor_to_image(diffusion.denormalize_image(noisy_image.squeeze(0))).save("noisy_image.png")
+      #  copy = predicted_noise.clone().detach().cpu()
+      #  diffusionAPI.tensor_to_image(diffusion.denormalize_image(copy.squeeze(0))).save("predicted_image.png")
 
-
-      loss = criterion(predicted_noise, noisy_image)
+      # we are trying to predict the noise added to images
+      # thus our loss is only on the actual noise itself
+      loss = criterion(predicted_noise_added_to_image, noise_added_to_image, )
       loss.backward()
       optimizer.step()
       optimizer.zero_grad()

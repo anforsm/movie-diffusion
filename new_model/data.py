@@ -5,10 +5,10 @@ from PIL import Image
 import requests
 
 class ImageDataset(torch.utils.data.Dataset):
-  def __init__(self):
+  def __init__(self, size=1):
     super().__init__()
     simple_image = self.get_simple_image()
-    self.images = [simple_image.clone() for _ in range(1)]
+    self.images = [simple_image.clone() for _ in range(size)]
   
   def get_simple_image(self):
     url = "https://www.themoviedb.org/t/p/w1280/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg"

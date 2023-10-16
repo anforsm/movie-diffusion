@@ -5,7 +5,7 @@ from tqdm import tqdm
 from PIL import Image
 
 class GaussianDiffusion:
-  def __init__(self, model, noise_steps, beta_0, beta_T, image_size):
+  def __init__(self, model, noise_steps, beta_0, beta_T, image_size, channels=3):
     """
 
     model: the model to be trained (nn.Module)
@@ -14,6 +14,8 @@ class GaussianDiffusion:
     beta_T: the final value of beta (float)
     image_size: the size of the image (int, int)
     """
+
+    self.channels = channels
 
     self.model = model
     self.noise_steps = noise_steps
@@ -48,6 +50,12 @@ class GaussianDiffusion:
 
   
   def apply_noise(self, x, t):
+    # force x to be (batch_size, image_width, image_height, channels)
+    if len(x.shape) == 3:
+      x = x.unsqueeze(0)
+    if type(t) == int:
+      t = torch.tensor([t])
+
     sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t])
     sqrt_one_minus_alpha_hat = torch.sqrt(1.0 - self.alpha_hat[t])
     # standard normal distribution
@@ -55,7 +63,9 @@ class GaussianDiffusion:
 
     # Eq 2. in DDPM paper
     noisy_image = sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * epsilon
-    return torch.clip(noisy_image, -1.0, 1.0)
+    # returning noisy iamge and the noise which was added to the image
+    #return noisy_image, epsilon
+    return torch.clip(noisy_image, -1.0, 1.0), epsilon
   
   @staticmethod
   def normalize_image(x):
@@ -67,6 +77,24 @@ class GaussianDiffusion:
     # denormalize image to [0, 255]
     return (x + 1.0) / 2.0 * 255.0
   
+  def sample_step(self, x, t):
+    z = torch.randn_like(x) if t >= 1 else torch.zeros_like(x)
+
+    alpha = self.alphas[t]
+    one_over_sqrt_alpha = 1.0 / torch.sqrt(alpha)
+    one_minus_alpha = 1.0 - alpha
+
+    sqrt_one_minus_alpha_hat = torch.sqrt(1.0 - self.alpha_hat[t])
+    beta_hat = (1 - self.alpha_hat[t-1]) / (1 - self.alpha_hat[t]) * self.betas[t]
+    beta = self.betas[t]
+    # we can either use beta_hat or beta_t
+    # std = torch.sqrt(beta_hat)
+    std = torch.sqrt(beta)
+
+    x_t_minus_1 = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * self.model(x, torch.tensor([t]))) + std * z
+
+    return x_t_minus_1
+  
   def sample(self, num_samples):
     """
     Sample from the model
@@ -74,17 +102,10 @@ class GaussianDiffusion:
     self.model.eval()
     image_versions = []
     with torch.no_grad():
-      x = torch.randn(1, *self.image_size, 3)
-      for t in tqdm(reversed(range(self.noise_steps)), total=self.noise_steps):
+      x = torch.randn(1, *self.image_size, self.channels)
+      for t in tqdm(reversed(range(1, self.noise_steps)), total=self.noise_steps):
         image_versions.append(self.denormalize_image(torch.clip(x, -1, 1)).clone().squeeze(0))
-        t_ = torch.tensor([t])
-        predicted_noise = self.model(x, t_)
-        x = predicted_noise
-        #alpha = self.alphas[t]
-        #alpha_hat = self.alpha_hat[t]
-        #beta = self.betas[t]
-        #z = torch.randn_like(x) if t == 0 else torch.zeros_like(x)
-        #x = 1 / torch.sqrt(alpha) * (x - ((1 - alpha) / (torch.sqrt(1 - alpha_hat))) * predicted_noise) + torch.sqrt(beta) * z 
+        x = self.sample_step(x, t)
     self.model.train()
     x = torch.clip(x, -1.0, 1.0)
     return self.denormalize_image(x), image_versions
