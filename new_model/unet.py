@@ -9,6 +9,7 @@ class SinusoidalPositionalEncoding(nn.Module):
 
     def forward(self, t):
         device = t.device
+        t = t.unsqueeze(-1)
         inv_freq = 1.0 / (10000 ** (torch.arange(0, self.dim, 2, device=device).float() / self.dim))
         sin_enc = torch.sin(t.repeat(1, self.dim // 2) * inv_freq)
         cos_enc = torch.cos(t.repeat(1, self.dim // 2) * inv_freq)

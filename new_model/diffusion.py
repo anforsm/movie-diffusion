@@ -7,6 +7,8 @@ from PIL import Image
 class GaussianDiffusion:
   def __init__(self, model, noise_steps, beta_0, beta_T, image_size, channels=3):
     """
+    suggested betas for:
+      * linear schedule: 1e-4, 0.02
 
     model: the model to be trained (nn.Module)
     noise_steps: the number of steps to apply noise (int)
@@ -56,13 +58,14 @@ class GaussianDiffusion:
     if type(t) == int:
       t = torch.tensor([t])
 
-    sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t])
-    sqrt_one_minus_alpha_hat = torch.sqrt(1.0 - self.alpha_hat[t])
+    sqrt_alpha_hat = torch.sqrt(torch.tensor([self.alpha_hat[t_] for t_ in t]))
+    sqrt_one_minus_alpha_hat = torch.sqrt(torch.tensor([1.0 - self.alpha_hat[t_] for t_ in t]))
     # standard normal distribution
     epsilon = torch.randn_like(x)
 
     # Eq 2. in DDPM paper
-    noisy_image = sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * epsilon
+    #noisy_image = sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * epsilon
+    noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
     # returning noisy iamge and the noise which was added to the image
     #return noisy_image, epsilon
     return torch.clip(noisy_image, -1.0, 1.0), epsilon
@@ -95,7 +98,7 @@ class GaussianDiffusion:
 
     return x_t_minus_1
   
-  def sample(self, num_samples):
+  def sample(self, num_samples, show_progress=True):
     """
     Sample from the model
     """
@@ -103,7 +106,10 @@ class GaussianDiffusion:
     image_versions = []
     with torch.no_grad():
       x = torch.randn(1, *self.image_size, self.channels)
-      for t in tqdm(reversed(range(1, self.noise_steps)), total=self.noise_steps):
+      it = reversed(range(1, self.noise_steps))
+      if show_progress:
+        it = tqdm(it)
+      for t in it:
         image_versions.append(self.denormalize_image(torch.clip(x, -1, 1)).clone().squeeze(0))
         x = self.sample_step(x, t)
     self.model.train()
