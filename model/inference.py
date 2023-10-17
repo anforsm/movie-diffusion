@@ -12,7 +12,7 @@ def inference():
   model = Unet(
     image_channels=3,
   )
-  model.load_state_dict(torch.load("model.pt"))
+  model.load_state_dict(torch.load("./out/model.pt"))
 
   diffusion = GaussianDiffusion(
     model=model,
@@ -37,7 +37,7 @@ def inference():
   print(len(images))
   print(images[0])
   # make gif out of pillow images
-  images[0].save('versions.gif',
+  images[0].save('./gif_output/versions.gif',
                  save_all=True,
                  append_images=images[1:],
                  duration=100,
