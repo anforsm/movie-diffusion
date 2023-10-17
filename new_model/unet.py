@@ -112,7 +112,7 @@ class DownBlock(nn.Module):
         # x: (batch_size, out_channels, height, width)
         # we repeat the time embedding to match the shape of x
         t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
-        x = x + t 
+        x = x + t
         return x, residual
 
 
