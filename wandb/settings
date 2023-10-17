@@ -1,0 +1,5 @@
+[default]
+entity = anton-forsman-aisweden
+project = movie-diffusion
+base_url = https://api.wandb.ai
+
