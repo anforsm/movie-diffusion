@@ -10,7 +10,7 @@ from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
 def train():
-  batch_size = 8
+  batch_size = 42
   dataloader = torch.utils.data.DataLoader(
     ImageDataset(size=batch_size),
     batch_size=batch_size,
