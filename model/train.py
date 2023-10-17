@@ -41,8 +41,10 @@ def train():
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
   image_every_n_steps = 100
-  device = "cpu"
+  device = "cuda"
+
   model.to(device)
+  diffusion.to(device)
   step_i = 0
   acc_loss = 0
   for epoch in range(epochs):

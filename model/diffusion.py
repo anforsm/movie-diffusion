@@ -16,7 +16,7 @@ class GaussianDiffusion:
     beta_T: the final value of beta (float)
     image_size: the size of the image (int, int)
     """
-
+    self.device = 'cpu'
     self.channels = channels
 
     self.model = model
@@ -32,11 +32,17 @@ class GaussianDiffusion:
 
   def beta_schedule(self, schedule="linear"):
     if schedule == "linear":
-      return torch.linspace(self.beta_0, self.beta_T, self.noise_steps)
+      return torch.linspace(self.beta_0, self.beta_T, self.noise_steps).to(self.device)
   
   def sample_time_steps(self, batch_size=1):
-    return torch.randint(0, self.noise_steps, (batch_size,))
+    return torch.randint(0, self.noise_steps, (batch_size,)).to(self.device)
   
+  def to(self,device):
+    self.device = device
+    self.betas = self.betas.to(device)
+    self.alphas = self.alphas.to(device)
+    self.alpha_hat = self.alpha_hat.to(device)
+
   
   def q(self, x, t):
     """
@@ -58,14 +64,15 @@ class GaussianDiffusion:
     if type(t) == int:
       t = torch.tensor([t])
 
-    sqrt_alpha_hat = torch.sqrt(torch.tensor([self.alpha_hat[t_] for t_ in t]))
-    sqrt_one_minus_alpha_hat = torch.sqrt(torch.tensor([1.0 - self.alpha_hat[t_] for t_ in t]))
+    sqrt_alpha_hat = torch.sqrt(torch.tensor([self.alpha_hat[t_] for t_ in t]).to(self.device))
+    sqrt_one_minus_alpha_hat = torch.sqrt(torch.tensor([1.0 - self.alpha_hat[t_] for t_ in t]).to(self.device))
     # standard normal distribution
-    epsilon = torch.randn_like(x)
+    epsilon = torch.randn_like(x).to(self.device)
 
     # Eq 2. in DDPM paper
     #noisy_image = sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * epsilon
-    noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
+    
+    noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
     # returning noisy iamge and the noise which was added to the image
     #return noisy_image, epsilon
     return torch.clip(noisy_image, -1.0, 1.0), epsilon
@@ -81,8 +88,9 @@ class GaussianDiffusion:
     return (x + 1.0) / 2.0 * 255.0
   
   def sample_step(self, x, t):
+    device = x.device
     z = torch.randn_like(x) if t >= 1 else torch.zeros_like(x)
-
+    z = z.to(device)
     alpha = self.alphas[t]
     one_over_sqrt_alpha = 1.0 / torch.sqrt(alpha)
     one_minus_alpha = 1.0 - alpha
@@ -93,8 +101,7 @@ class GaussianDiffusion:
     # we can either use beta_hat or beta_t
     # std = torch.sqrt(beta_hat)
     std = torch.sqrt(beta)
-
-    x_t_minus_1 = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * self.model(x, torch.tensor([t]))) + std * z
+    x_t_minus_1 = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * self.model(x, torch.tensor([t]).to(device))) + std * z
 
     return x_t_minus_1
   
@@ -105,7 +112,7 @@ class GaussianDiffusion:
     self.model.eval()
     image_versions = []
     with torch.no_grad():
-      x = torch.randn(1, *self.image_size, self.channels)
+      x = torch.randn(1, *self.image_size, self.channels).to(self.device)
       it = reversed(range(1, self.noise_steps))
       if show_progress:
         it = tqdm(it)
@@ -136,4 +143,4 @@ class DiffusionImageAPI:
     return [self.get_noisy_image(image, t) for t in time_steps]
   
   def tensor_to_image(self, tensor):
-    return Image.fromarray(tensor.numpy().astype(np.uint8))
+    return Image.fromarray(tensor.cpu().numpy().astype(np.uint8))
