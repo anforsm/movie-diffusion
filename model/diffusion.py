@@ -5,7 +5,7 @@ from tqdm import tqdm
 from PIL import Image
 import math 
 class GaussianDiffusion:
-  def __init__(self, model, noise_steps, beta_0, beta_T, image_size, channels=3):
+  def __init__(self, model, noise_steps, beta_0, beta_T, image_size, channels=3, schedule="linear"):
     """
     suggested betas for:
       * linear schedule: 1e-4, 0.02
@@ -25,12 +25,12 @@ class GaussianDiffusion:
     self.beta_T = beta_T
     self.image_size = image_size
 
-    self.betas = self.beta_schedule()
+    self.betas = self.beta_schedule(schedule=schedule)
     self.alphas = 1.0 - self.betas
     # cumulative product of alphas, so we can optimize forward process calculation
     self.alpha_hat = torch.cumprod(self.alphas, dim=0)
 
-  def beta_schedule(self, schedule="linear"):
+  def beta_schedule(self, schedule="cosine"):
     if schedule == "linear":
       return torch.linspace(self.beta_0, self.beta_T, self.noise_steps).to(self.device)
     elif schedule == "cosine":
@@ -40,24 +40,14 @@ class GaussianDiffusion:
         )
       
 
-  def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
-    """
-    Create a beta schedule that discretizes the given alpha_t_bar function,
-    which defines the cumulative product of (1-beta) over time from t = [0,1].
+  def betas_for_alpha_bar(self,num_diffusion_timesteps, alpha_bar, max_beta=0.999):
 
-    :param num_diffusion_timesteps: the number of betas to produce.
-    :param alpha_bar: a lambda that takes an argument t from 0 to 1 and
-                      produces the cumulative product of (1-beta) up to that
-                      part of the diffusion process.
-    :param max_beta: the maximum beta to use; use values lower than 1 to
-                     prevent singularities.
-    """
     betas = []
     for i in range(num_diffusion_timesteps):
         t1 = i / num_diffusion_timesteps
         t2 = (i + 1) / num_diffusion_timesteps
         betas.append(min(1 - alpha_bar(t2) / alpha_bar(t1), max_beta))
-    return np.array(betas)
+    return torch.tensor(betas).to(self.device)
   
 
   def sample_time_steps(self, batch_size=1):
@@ -89,7 +79,7 @@ class GaussianDiffusion:
       x = x.unsqueeze(0)
     if type(t) == int:
       t = torch.tensor([t])
-
+    #print(f'Shape -> {x.shape}, len -> {len(x.shape)}')
     sqrt_alpha_hat = torch.sqrt(torch.tensor([self.alpha_hat[t_] for t_ in t]).to(self.device))
     sqrt_one_minus_alpha_hat = torch.sqrt(torch.tensor([1.0 - self.alpha_hat[t_] for t_ in t]).to(self.device))
     # standard normal distribution
@@ -97,8 +87,13 @@ class GaussianDiffusion:
 
     # Eq 2. in DDPM paper
     #noisy_image = sqrt_alpha_hat * x + sqrt_one_minus_alpha_hat * epsilon
+
+    """print(f'''
+              Shape of x {x.shape}
+              Shape of sqrt {sqrt_one_minus_alpha_hat.shape}''')"""
     
     noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
+    #print(f'Noisy image -> {noisy_image.shape}')
     # returning noisy iamge and the noise which was added to the image
     #return noisy_image, epsilon
     return torch.clip(noisy_image, -1.0, 1.0), epsilon
@@ -155,10 +150,15 @@ class DiffusionImageAPI:
   
   def get_noisy_image(self, image, t):
     x = torch.tensor(np.array(image))
+    
     x = self.diffusion_model.normalize_image(x)
-    y = self.diffusion_model.apply_noise(x, t)
+
+    y, _ = self.diffusion_model.apply_noise(x, t)
+    
     y = self.diffusion_model.denormalize_image(y)
-    return Image.fromarray(y.numpy().astype(np.uint8))
+    #print(f"Shape of Image: {y.shape}")
+
+    return Image.fromarray(y.squeeze(0).numpy().astype(np.uint8))
 
   
   def get_noisy_images(self, image, time_steps):
@@ -166,7 +166,8 @@ class DiffusionImageAPI:
     image: the image to be processed PIL.Image
     time_steps: the number of time steps to apply noise (int)
     """
-    return [self.get_noisy_image(image, t) for t in time_steps]
+
+    return [self.get_noisy_image(image, int(t)) for t in time_steps]
   
   def tensor_to_image(self, tensor):
     return Image.fromarray(tensor.cpu().numpy().astype(np.uint8))

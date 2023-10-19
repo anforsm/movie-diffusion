@@ -37,7 +37,7 @@ def train():
   optimizer = optim.Adam(model.parameters(), lr=1e-4)
   criterion = nn.MSELoss()
 
-  epochs = int(10_000)
+  epochs = int(1000)
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
   image_every_n_steps = 100
