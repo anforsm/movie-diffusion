@@ -44,7 +44,7 @@ def collate_fn(batch):
 def train():
   batch_size = BATCH_SIZE
   dataloader = torch.utils.data.DataLoader(
-    ImageDataset(size=batch_size),
+    ImageDataset(size=batch_size*2),
     batch_size=batch_size,
     shuffle=False,
     collate_fn=collate_fn,
