@@ -133,7 +133,7 @@ class GaussianDiffusion:
     self.model.eval()
     image_versions = []
     with torch.no_grad():
-      x = torch.randn(1, *self.image_size, self.channels).to(self.device)
+      x = torch.randn(1, self.channels, *self.image_size).to(self.device)
       it = reversed(range(1, self.noise_steps))
       if show_progress:
         it = tqdm(it)
