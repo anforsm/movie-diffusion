@@ -42,31 +42,22 @@ class ConvBlock(nn.Module):
         x = self.act(x)
         return x
 
-
-# Using Transformer and Encoder
 class SelfAttentionBlock(nn.Module):
-    def __init__(self, channels: int, size: int):
+    def __init__(self, channels: int):
         super().__init__()
-        self.channels = channels
-        self.size = size
-        self.mha = nn.MultiheadAttention(channels, 4, batch_first=True)
-        self.ln = nn.LayerNorm([channels])
-
-        # They use GELU?
-        self.ff_self = nn.Sequential(
-            nn.LayerNorm([channels]),
-            nn.Linear(channels, channels),
-            nn.ReLU(),
-            nn.Linear(channels, channels),
+        self.transformer = nn.TransformerEncoderLayer(
+            d_model=channels,
+            nhead=4,
+            dropout=0.1,
+            activation="relu",
         )
-
-    # DO NOT DO NORM BEFORE ATTENTION? CHANGE SWAP AXES
+    
     def forward(self, x):
-        # swapaxes
-        x = x.view(-1, self.channels, self.size * self.size).swapaxes(1, 2)
-        x_ln = self.ln(x)
-        q = self.ln(x)
-        attention_value, _ = self.mha(x_ln, x_ln, x_ln)
+        # x: (batch_size, channels, height, width)
+        batch_size, channels, height, width = x.shape
+        x = x.view(batch_size, channels, -1).swapaxes(1, 2)
+        x = self.transformer(x)
+        return x.swapaxes(1, 2).view(batch_size, channels, height, width)
 
 
 class DownBlock(nn.Module):
@@ -92,6 +83,10 @@ class DownBlock(nn.Module):
             out_channels=out_channels,
         )
 
+        self.attn = SelfAttentionBlock(
+            channels=out_channels,
+        )
+
         self.conv2 = ConvBlock(
             in_channels=out_channels,
             out_channels=out_channels,
@@ -104,6 +99,7 @@ class DownBlock(nn.Module):
 
     def forward(self, x, t):
         x = self.conv1(x)
+        x = self.attn(x)
         x = self.conv2(x)
         residual = x
         x = self.downsample(x)
@@ -150,6 +146,10 @@ class UpBlock(nn.Module):
             out_channels=out_channels,
         )
 
+        self.attn = SelfAttentionBlock(
+            channels=out_channels,
+        )
+
         self.conv2 = ConvBlock(
             in_channels=out_channels,
             out_channels=out_channels,
@@ -163,6 +163,7 @@ class UpBlock(nn.Module):
             x = torch.cat([x, residual], dim=1)
 
         x = self.conv1(x)
+        x = self.attn(x)
         x = self.conv2(x)
 
         t = self.time_embedding_layer(t)
@@ -177,17 +178,23 @@ class Bottleneck(nn.Module):
     def __init__(self, channels):
         super().__init__()
         self.channels = channels
+        in_channels = channels
+        out_channels = channels * 2
         self.conv1 = ConvBlock(
-            in_channels=channels,
-            out_channels=channels*2,
+            in_channels=in_channels,
+            out_channels=out_channels,
+        )
+        self.attn = SelfAttentionBlock(
+            channels=out_channels,
         )
         self.conv2 = ConvBlock( 
-            in_channels=channels*2,
-            out_channels=channels*2,
+            in_channels=out_channels,
+            out_channels=out_channels,
         )
     
     def forward(self, x):
         x = self.conv1(x)
+        x = self.attn(x)
         x = self.conv2(x)
         return x
 
