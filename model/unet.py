@@ -70,9 +70,10 @@ class DownBlock(nn.Module):
     for downsampling. At each downsampling step we double the number of feature channels.'
     """
 
-    def __init__(self, in_channels, out_channels, time_embedding_dim):
+    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False):
         """in_channels will typically be half of out_channels"""
         super().__init__()
+        self.use_attn = use_attn
 
         self.time_embedding_layer = nn.Sequential(
             nn.Linear(time_embedding_dim, out_channels),
@@ -84,9 +85,10 @@ class DownBlock(nn.Module):
             out_channels=out_channels,
         )
 
-        self.attn = SelfAttentionBlock(
-            channels=out_channels,
-        )
+        if self.use_attn:
+            self.attn = SelfAttentionBlock(
+                channels=out_channels,
+            )
 
         self.conv2 = ConvBlock(
             in_channels=out_channels,
@@ -100,7 +102,8 @@ class DownBlock(nn.Module):
 
     def forward(self, x, t):
         x = self.conv1(x)
-        x = self.attn(x)
+        if self.use_attn:
+            x = self.attn(x)
         x = self.conv2(x)
         residual = x
         x = self.downsample(x)
@@ -122,10 +125,11 @@ class UpBlock(nn.Module):
     each followed by a ReLU.
     """
 
-    def __init__(self, in_channels, out_channels, time_embedding_dim):
+    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False):
         """in_channels will typically be double of out_channels
         """
         super().__init__()
+        self.use_attn = use_attn
 
         self.time_embedding_layer = nn.Sequential(
             nn.Linear(time_embedding_dim, out_channels),
@@ -147,9 +151,10 @@ class UpBlock(nn.Module):
             out_channels=out_channels,
         )
 
-        self.attn = SelfAttentionBlock(
-            channels=out_channels,
-        )
+        if self.use_attn:
+            self.attn = SelfAttentionBlock(
+                channels=out_channels,
+            )
 
         self.conv2 = ConvBlock(
             in_channels=out_channels,
@@ -164,7 +169,8 @@ class UpBlock(nn.Module):
             x = torch.cat([x, residual], dim=1)
 
         x = self.conv1(x)
-        x = self.attn(x)
+        if self.use_attn:
+            x = self.attn(x)
         x = self.conv2(x)
 
         t = self.time_embedding_layer(t)
@@ -221,6 +227,12 @@ class Unet(nn.Module):
             #(512, 1024),
             #(starting_channels * 4, starting_channels * 8),
         ]
+        # image size
+        # 192 x 128
+        # 96 x 64
+        # 48 x 32
+        # 24 x 16
+        # 12 x 8
 
         channels_list_up = [
             #(starting_channels * 8 * 2, starting_channels * 4 * 2),
@@ -231,10 +243,17 @@ class Unet(nn.Module):
             (128, 64),
         ]
 
+        use_attn = [
+            False,
+            False, 
+            True,
+            True,
+        ]
+
         self.contracting_path = nn.ModuleList(
             [
-                DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim)
-                for in_channels, out_channels in channels_list_down
+                DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn)
+                for (in_channels, out_channels), attn in zip(channels_list_down, use_attn)
             ]
         )
 
@@ -245,7 +264,7 @@ class Unet(nn.Module):
                 # multiply by 2 since we concatenate the channels from the contracting path
                 # also because of bottleneck doubling the channels
                 UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim)
-                for in_channels, out_channels in channels_list_up
+                for (in_channels, out_channels), attn in zip(channels_list_up, reversed(use_attn))
             ]
         )
 
