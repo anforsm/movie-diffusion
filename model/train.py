@@ -1,3 +1,6 @@
+import warnings
+warnings.filterwarnings("ignore", message="Using padding='same' with even kernel lengths and odd dilation may require a zero-padded copy of the input be created")
+
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -12,8 +15,8 @@ from data import ImageDataset
 
 LOG_WANDB = True
 
-IMAGE_WIDTH = 128 
-IMAGE_HEIGHT = 192
+IMAGE_WIDTH = 32 
+IMAGE_HEIGHT = 32
 
 BATCH_SIZE = 12
 DEVICE = "cuda"
@@ -40,12 +43,14 @@ reverse_transform = transforms.Compose([
 ])
 
 def collate_fn(batch):
-  return torch.stack([image_transform(image["image"]) for image in batch])
+  #return torch.stack([image_transform(image["image"]) for image in batch])
+  return torch.stack([image_transform(image["img"]) for image in batch])
 
 def train():
   batch_size = BATCH_SIZE
   #dataset = ImageDataset(size=batch_size*2),
-  dataset = load_dataset("skvarre/movie_posters", split="train")
+  #dataset = load_dataset("skvarre/movie_posters", split="train")
+  dataset = load_dataset("cifar10", split="train")
   dataloader = torch.utils.data.DataLoader(
     dataset,
     batch_size=batch_size,
@@ -56,7 +61,7 @@ def train():
   model = Unet(
     image_channels=3,
   )
-  print(sum(p.numel() for p in model.parameters()))
+  print(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters")
 
   diffusion = GaussianDiffusion(
     model=model,
@@ -76,7 +81,7 @@ def train():
   epochs = int(4)
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
-  image_every_n_steps = 50
+  image_every_n_steps = 500 
   device = DEVICE
 
   model.to(device)
