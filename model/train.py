@@ -14,6 +14,9 @@ LOG_WANDB = False
 IMAGE_WIDTH = 128 
 IMAGE_HEIGHT = 192
 
+BATCH_SIZE = 1
+DEVICE = "cpu"
+
 if LOG_WANDB:
   import wandb
 
@@ -39,7 +42,7 @@ def collate_fn(batch):
   return torch.stack([image_transform(image) for image in batch])
 
 def train():
-  batch_size = 1
+  batch_size = BATCH_SIZE
   dataloader = torch.utils.data.DataLoader(
     ImageDataset(size=batch_size),
     batch_size=batch_size,
@@ -71,7 +74,7 @@ def train():
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
   image_every_n_steps = 10
-  device = "cpu"
+  device = DEVICE
 
   model.to(device)
   diffusion.to(device)
