@@ -92,7 +92,13 @@ class GaussianDiffusion:
               Shape of x {x.shape}
               Shape of sqrt {sqrt_one_minus_alpha_hat.shape}''')"""
     
-    noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
+    try:
+      #print(x.shape)
+      noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
+    except:
+      print(f'Failed image: shape {x.shape}')
+      
+    
     #print(f'Noisy image -> {noisy_image.shape}')
     # returning noisy iamge and the noise which was added to the image
     #return noisy_image, epsilon
