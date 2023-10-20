@@ -209,11 +209,15 @@ class Unet(nn.Module):
             (3, 64),
             (64, 128),
             (128, 256),
+            (256, 512),
+            #(512, 1024),
             #(starting_channels * 4, starting_channels * 8),
         ]
 
         channels_list_up = [
             #(starting_channels * 8 * 2, starting_channels * 4 * 2),
+            #(2048, 1024),
+            (1024, 512),
             (512, 256),
             (256, 128),
             (128, 64),
@@ -247,8 +251,9 @@ class Unet(nn.Module):
         )
 
     def forward(self, x, t):
+        # If using torchvision totensor, we do not need to swap axes
         # x: (batch_size, height, width, channels)
-        x = torch.einsum("bhwc->bchw", x)
+        #x = torch.einsum("bhwc->bchw", x)
         # x: (batch_size, channels, height, width)
         t = self.time_encoding(t)
 
@@ -271,6 +276,6 @@ class Unet(nn.Module):
 
         x = self.head(x)
         # x: (1, 3, 120, 80)
-        x = torch.einsum("bchw->bhwc", x)
+        #x = torch.einsum("bchw->bhwc", x)
         # x: (1, 120, 80, 3)
         return x

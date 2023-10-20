@@ -1,13 +1,38 @@
 import torch
 import torch.optim as optim
 import torch.nn as nn
+from torchvision import transforms
 from tqdm import tqdm
 import numpy as np
-import wandb
 
 from unet import Unet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
+
+LOG_WANDB = False
+if LOG_WANDB:
+  import wandb
+
+image_transform = transforms.Compose([
+  transforms.ToTensor(),
+  transforms.Lambda(lambda x: x * 2 - 1),
+  transforms.Resize((192, 128), antialias=True),
+])
+# 192 x 128
+# 96 x 64
+# 48 x 32
+# 24 x 16
+# 12 x 8
+# 6 x 4
+# 3 x 2
+
+reverse_transform = transforms.Compose([
+  transforms.Lambda(lambda x: (x + 1) / 2),
+  transforms.ToPILImage(),
+])
+
+def collate_fn(batch):
+  return torch.stack([image_transform(image) for image in batch])
 
 def train():
   batch_size = 42
@@ -15,6 +40,7 @@ def train():
     ImageDataset(size=batch_size),
     batch_size=batch_size,
     shuffle=False,
+    collate_fn=collate_fn,
   ) 
 
   model = Unet(
@@ -41,7 +67,7 @@ def train():
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
   image_every_n_steps = 100
-  device = "cuda"
+  device = "cpu"
 
   model.to(device)
   diffusion.to(device)
@@ -51,7 +77,7 @@ def train():
     for image in dataloader:
       step_i += 1 
       # (batch_size, image_width, image_height, channels)
-      image = diffusion.normalize_image(image)
+      #image = diffusion.normalize_image(image)
       t = diffusion.sample_time_steps(batch_size)
 
       noisy_image, noise_added_to_image = diffusion.apply_noise(image, t)
@@ -74,18 +100,22 @@ def train():
       if step_i % loss_every_n_steps == 0:
         acc_loss /= loss_every_n_steps
         pbar.set_description(f"Loss: {acc_loss:.4f}")
-        wandb.log({
-          "epoch": epoch,
-          "nr_images": batch_size * step_i,
-          "train_loss": acc_loss,
-        }, step=step_i)
+
+        if LOG_WANDB:
+          wandb.log({
+            "epoch": epoch,
+            "nr_images": batch_size * step_i,
+            "train_loss": acc_loss,
+          }, step=step_i)
+
         acc_loss = 0
       
       if step_i % image_every_n_steps == 0:
         image, _ = diffusion.sample(1, show_progress=False)
-        wandb.log({
-          "example_image": wandb.Image(imageAPI.tensor_to_image(image.squeeze(0))),
-        }, step=step_i)
+        if LOG_WANDB:
+          wandb.log({
+            "example_image": wandb.Image(imageAPI.tensor_to_image(image.squeeze(0))),
+          }, step=step_i)
       
       pbar.update(1)
 
@@ -93,7 +123,8 @@ def train():
   torch.save(model.state_dict(), "./out/model.pt")
 
 if __name__ == "__main__":
-  wandb.init(
-    project="movie-diffusion",
-  )
+  if LOG_WANDB:
+    wandb.init(
+      project="movie-diffusion",
+    )
   train()
