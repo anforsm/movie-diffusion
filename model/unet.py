@@ -50,6 +50,7 @@ class SelfAttentionBlock(nn.Module):
             nhead=4,
             dropout=0.1,
             activation="relu",
+            batch_first=True,
         )
     
     def forward(self, x):
