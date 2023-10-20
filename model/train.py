@@ -4,6 +4,7 @@ import torch.nn as nn
 from torchvision import transforms
 from tqdm import tqdm
 import numpy as np
+from datasets import load_dataset
 
 from unet import Unet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
@@ -39,12 +40,14 @@ reverse_transform = transforms.Compose([
 ])
 
 def collate_fn(batch):
-  return torch.stack([image_transform(image) for image in batch])
+  return torch.stack([image_transform(image["image"]) for image in batch])
 
 def train():
   batch_size = BATCH_SIZE
+  #dataset = ImageDataset(size=batch_size*2),
+  dataset = load_dataset("skvarre/movie_posters", split="train")
   dataloader = torch.utils.data.DataLoader(
-    ImageDataset(size=batch_size*2),
+    dataset,
     batch_size=batch_size,
     shuffle=True,
     collate_fn=collate_fn,
@@ -70,7 +73,7 @@ def train():
   optimizer = optim.Adam(model.parameters(), lr=1e-4)
   criterion = nn.MSELoss()
 
-  epochs = int(10000)
+  epochs = int(4)
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
   image_every_n_steps = 50
