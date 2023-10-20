@@ -9,13 +9,13 @@ from unet import Unet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
-LOG_WANDB = False
+LOG_WANDB = True
 
 IMAGE_WIDTH = 128 
 IMAGE_HEIGHT = 192
 
-BATCH_SIZE = 1
-DEVICE = "cpu"
+BATCH_SIZE = 12
+DEVICE = "cuda"
 
 if LOG_WANDB:
   import wandb
@@ -46,7 +46,7 @@ def train():
   dataloader = torch.utils.data.DataLoader(
     ImageDataset(size=batch_size*2),
     batch_size=batch_size,
-    shuffle=False,
+    shuffle=True,
     collate_fn=collate_fn,
   ) 
 
@@ -73,7 +73,7 @@ def train():
   epochs = int(10000)
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
-  image_every_n_steps = 10
+  image_every_n_steps = 50
   device = DEVICE
 
   model.to(device)
@@ -121,7 +121,7 @@ def train():
         image, _ = diffusion.sample(1, show_progress=False)
         if LOG_WANDB:
           wandb.log({
-            "example_image": wandb.Image(imageAPI.tensor_to_image(image.squeeze(0))),
+            "example_image": wandb.Image(imageAPI.tensor_to_image(image.squeeze(0).permute(1,2,0))),
           }, step=step_i)
       
       pbar.update(1)
