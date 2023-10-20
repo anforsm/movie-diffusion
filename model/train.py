@@ -10,13 +10,17 @@ from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
 LOG_WANDB = False
+
+IMAGE_WIDTH = 128 
+IMAGE_HEIGHT = 192
+
 if LOG_WANDB:
   import wandb
 
 image_transform = transforms.Compose([
   transforms.ToTensor(),
   transforms.Lambda(lambda x: x * 2 - 1),
-  transforms.Resize((192, 128), antialias=True),
+  transforms.Resize((IMAGE_HEIGHT, IMAGE_WIDTH), antialias=True),
 ])
 # 192 x 128
 # 96 x 64
@@ -35,7 +39,7 @@ def collate_fn(batch):
   return torch.stack([image_transform(image) for image in batch])
 
 def train():
-  batch_size = 42
+  batch_size = 1
   dataloader = torch.utils.data.DataLoader(
     ImageDataset(size=batch_size),
     batch_size=batch_size,
@@ -54,7 +58,7 @@ def train():
     #noise_steps=1024,
     beta_0=1e-4,
     beta_T=0.02,
-    image_size=(120, 80),
+    image_size=(IMAGE_HEIGHT, IMAGE_WIDTH),
     #image_size=(80, 120),
     #image_size=(16, 16),
   )
@@ -66,7 +70,7 @@ def train():
   epochs = int(10000)
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
-  image_every_n_steps = 100
+  image_every_n_steps = 10
   device = "cpu"
 
   model.to(device)
