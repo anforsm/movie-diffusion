@@ -56,6 +56,7 @@ def train():
     batch_size=batch_size,
     shuffle=True,
     collate_fn=collate_fn,
+    drop_last=True,
   ) 
 
   model = Unet(
@@ -78,7 +79,7 @@ def train():
   optimizer = optim.Adam(model.parameters(), lr=1e-4)
   criterion = nn.MSELoss()
 
-  epochs = int(4)
+  epochs = int(50000)
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
   image_every_n_steps = 500 
