@@ -10,7 +10,7 @@ from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
 def train():
-  batch_size = 8
+  batch_size = 42
   dataloader = torch.utils.data.DataLoader(
     ImageDataset(size=batch_size),
     batch_size=batch_size,
@@ -24,8 +24,8 @@ def train():
 
   diffusion = GaussianDiffusion(
     model=model,
-    #noise_steps=256,
-    noise_steps=1024,
+    noise_steps=256,
+    #noise_steps=1024,
     beta_0=1e-4,
     beta_T=0.02,
     image_size=(120, 80),
@@ -37,7 +37,7 @@ def train():
   optimizer = optim.Adam(model.parameters(), lr=1e-4)
   criterion = nn.MSELoss()
 
-  epochs = int(10_000)
+  epochs = int(10000)
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
   image_every_n_steps = 100
