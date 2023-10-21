@@ -13,13 +13,7 @@ from unet import Unet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
-LOG_WANDB = True
-
-IMAGE_WIDTH = 32 
-IMAGE_HEIGHT = 32
-
-BATCH_SIZE = 12
-DEVICE = "cuda"
+from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TRAIN_DATASET, HF_VAL_DATASET, VAL_EVERY_N_STEPS, IMAGE_EVERY_N_STEPS, EPOCHS, HF_IMAGE_KEY, HF_TRAIN_SPLIT, HF_VAL_SPLIT
 
 if LOG_WANDB:
   import wandb
@@ -29,13 +23,6 @@ image_transform = transforms.Compose([
   transforms.Lambda(lambda x: x * 2 - 1),
   transforms.Resize((IMAGE_HEIGHT, IMAGE_WIDTH), antialias=True),
 ])
-# 192 x 128
-# 96 x 64
-# 48 x 32
-# 24 x 16
-# 12 x 8
-# 6 x 4
-# 3 x 2
 
 reverse_transform = transforms.Compose([
   transforms.Lambda(lambda x: (x + 1) / 2),
@@ -43,14 +30,11 @@ reverse_transform = transforms.Compose([
 ])
 
 def collate_fn(batch):
-  #return torch.stack([image_transform(image["image"]) for image in batch])
-  return torch.stack([image_transform(image["img"]) for image in batch])
+  return torch.stack([image_transform(image[HF_IMAGE_KEY]) for image in batch])
 
 def train():
   batch_size = BATCH_SIZE
-  #dataset = ImageDataset(size=batch_size*2),
-  #dataset = load_dataset("skvarre/movie_posters", split="train")
-  dataset = load_dataset("cifar10", split="train")
+  dataset = load_dataset(HF_TRAIN_DATASET, split=HF_TRAIN_SPLIT)
   dataloader = torch.utils.data.DataLoader(
     dataset,
     batch_size=batch_size,
@@ -58,6 +42,14 @@ def train():
     collate_fn=collate_fn,
     drop_last=True,
   ) 
+  val_dataset = load_dataset(HF_VAL_DATASET, split=HF_VAL_SPLIT)
+  val_dataloader = torch.utils.data.DataLoader(
+    val_dataset,
+    batch_size=batch_size,
+    shuffle=True,
+    collate_fn=collate_fn,
+    drop_last=True,
+  )
 
   model = Unet(
     image_channels=3,
@@ -79,10 +71,11 @@ def train():
   optimizer = optim.Adam(model.parameters(), lr=1e-4)
   criterion = nn.MSELoss()
 
-  epochs = int(50000)
+  epochs = int(EPOCHS)
   pbar = tqdm(total=int(epochs * len(dataloader)))
   loss_every_n_steps = 10
-  image_every_n_steps = 500 
+  val_every_n_steps = VAL_EVERY_N_STEPS
+  image_every_n_steps = IMAGE_EVERY_N_STEPS
   device = DEVICE
 
   model.to(device)
@@ -131,6 +124,13 @@ def train():
         if LOG_WANDB:
           wandb.log({
             "example_image": wandb.Image(imageAPI.tensor_to_image(image.squeeze(0).permute(1,2,0))),
+          }, step=step_i)
+        
+      if step_i % val_every_n_steps == 0:
+        val_loss = diffusion.validate(val_dataloader)
+        if LOG_WANDB:
+          wandb.log({
+            "val_loss": val_loss,
           }, step=step_i)
       
       pbar.update(1)
