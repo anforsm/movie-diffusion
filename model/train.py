@@ -13,7 +13,7 @@ from unet import Unet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
-from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TRAIN_DATASET, HF_VAL_DATASET, VAL_EVERY_N_STEPS, IMAGE_EVERY_N_STEPS, EPOCHS, HF_IMAGE_KEY, HF_TRAIN_SPLIT, HF_VAL_SPLIT
+from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TRAIN_DATASET, HF_VAL_DATASET, VAL_EVERY_N_STEPS, IMAGE_EVERY_N_STEPS, EPOCHS, HF_IMAGE_KEY, HF_TRAIN_SPLIT, HF_VAL_SPLIT, BETA_SCHEDULE
 
 if LOG_WANDB:
   import wandb
@@ -73,6 +73,7 @@ def train():
     image_size=(IMAGE_HEIGHT, IMAGE_WIDTH),
     #image_size=(80, 120),
     #image_size=(16, 16),
+    schedule=BETA_SCHEDULE,
   )
   imageAPI = DiffusionImageAPI(diffusion)
 
@@ -150,5 +151,20 @@ if __name__ == "__main__":
   if LOG_WANDB:
     wandb.init(
       project="movie-diffusion",
+      config={
+        "image_width": IMAGE_WIDTH,
+        "image_height": IMAGE_HEIGHT,
+        "batch_size": BATCH_SIZE,
+        "device": DEVICE,
+        "hf_train_dataset": HF_TRAIN_DATASET,
+        "hf_train_split": HF_TRAIN_SPLIT,
+        "hf_val_dataset": HF_VAL_DATASET,
+        "hf_val_split": HF_VAL_SPLIT,
+        "hf_image_key": HF_IMAGE_KEY,
+        "epochs": EPOCHS,
+        "val_every_n_steps": VAL_EVERY_N_STEPS,
+        "image_every_n_steps": IMAGE_EVERY_N_STEPS,
+        "beta_schedule": BETA_SCHEDULE,
+      }
     )
   train()
