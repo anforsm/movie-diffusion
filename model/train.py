@@ -13,7 +13,7 @@ from unet import Unet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
-from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TRAIN_DATASET, HF_VAL_DATASET, VAL_EVERY_N_STEPS, IMAGE_EVERY_N_STEPS, EPOCHS, HF_IMAGE_KEY, HF_TRAIN_SPLIT, HF_VAL_SPLIT, BETA_SCHEDULE, NOISE_STEPS
+from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TRAIN_DATASET, HF_VAL_DATASET, VAL_EVERY_N_STEPS, IMAGE_EVERY_N_STEPS, EPOCHS, HF_IMAGE_KEY, HF_TRAIN_SPLIT, HF_VAL_SPLIT, BETA_SCHEDULE, NOISE_STEPS, DROPOUT
 
 if LOG_WANDB:
   import wandb
@@ -61,6 +61,7 @@ def train():
 
   model = Unet(
     image_channels=3,
+    dropout=DROPOUT,
   )
   print(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters")
 

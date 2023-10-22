@@ -48,7 +48,7 @@ class SelfAttentionBlock(nn.Module):
         self.transformer = nn.TransformerEncoderLayer(
             d_model=channels,
             nhead=4,
-            dropout=0.1,
+            dropout=0,
             activation="relu",
             batch_first=True,
         )
@@ -70,7 +70,7 @@ class DownBlock(nn.Module):
     for downsampling. At each downsampling step we double the number of feature channels.'
     """
 
-    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False):
+    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0):
         """in_channels will typically be half of out_channels"""
         super().__init__()
         self.use_attn = use_attn
@@ -85,10 +85,7 @@ class DownBlock(nn.Module):
             out_channels=out_channels,
         )
 
-        if self.use_attn:
-            self.attn = SelfAttentionBlock(
-                channels=out_channels,
-            )
+        self.dropout = nn.Dropout(dropout)
 
         self.conv2 = ConvBlock(
             in_channels=out_channels,
@@ -100,11 +97,13 @@ class DownBlock(nn.Module):
             stride=2,
         )
 
+        if self.use_attn:
+            self.attn = SelfAttentionBlock(
+                channels=out_channels,
+            )
+
     def forward(self, x, t):
         x = self.conv1(x)
-        if self.use_attn:
-            x = self.attn(x)
-        x = self.conv2(x)
         residual = x
         x = self.downsample(x)
         t = self.time_embedding_layer(t)
@@ -113,6 +112,12 @@ class DownBlock(nn.Module):
         # we repeat the time embedding to match the shape of x
         t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
         x = x + t
+
+        x = self.dropout(x)
+        x = self.conv2(x)
+
+        if self.use_attn:
+            x = self.attn(x)
         return x, residual
 
 
@@ -125,7 +130,7 @@ class UpBlock(nn.Module):
     each followed by a ReLU.
     """
 
-    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False):
+    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0):
         """in_channels will typically be double of out_channels
         """
         super().__init__()
@@ -151,15 +156,17 @@ class UpBlock(nn.Module):
             out_channels=out_channels,
         )
 
-        if self.use_attn:
-            self.attn = SelfAttentionBlock(
-                channels=out_channels,
-            )
+        self.dropout = nn.Dropout(dropout)
 
         self.conv2 = ConvBlock(
             in_channels=out_channels,
             out_channels=out_channels,
         )
+
+        if self.use_attn:
+            self.attn = SelfAttentionBlock(
+                channels=out_channels,
+            )
 
     def forward(self, x, t, residual=None):
         x = self.upsample(x)
@@ -169,9 +176,6 @@ class UpBlock(nn.Module):
             x = torch.cat([x, residual], dim=1)
 
         x = self.conv1(x)
-        if self.use_attn:
-            x = self.attn(x)
-        x = self.conv2(x)
 
         t = self.time_embedding_layer(t)
         # t: (batch_size, time_embedding_dim) = (batch_size, out_channels)
@@ -179,30 +183,73 @@ class UpBlock(nn.Module):
         # we repeat the time embedding to match the shape of x
         t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
         x = x + t
+
+        x = self.dropout(x)
+        x = self.conv2(x)
+
+        if self.use_attn:
+            x = self.attn(x)
         return x
 
-class Bottleneck(nn.Module):
-    def __init__(self, channels):
+class DoubleConv(nn.Module):
+    def __init__(self, in_channels, out_channels, dropout, time_embedding_dim):
         super().__init__()
-        self.channels = channels
-        in_channels = channels
-        out_channels = channels * 2
+        self.time_embedding_layer = nn.Sequential(
+            nn.Linear(time_embedding_dim, out_channels),
+            nn.ReLU(),
+        )
+
         self.conv1 = ConvBlock(
             in_channels=in_channels,
             out_channels=out_channels,
         )
-        self.attn = SelfAttentionBlock(
-            channels=out_channels,
-        )
-        self.conv2 = ConvBlock( 
+        self.dropout = nn.Dropout(dropout)
+        self.conv2 = ConvBlock(
             in_channels=out_channels,
             out_channels=out_channels,
         )
     
-    def forward(self, x):
+    def forward(self, x, t):
         x = self.conv1(x)
-        x = self.attn(x)
+        
+        t = self.time_embedding_layer(t)
+        # t: (batch_size, time_embedding_dim) = (batch_size, out_channels)
+        # x: (batch_size, out_channels, height, width)
+        # we repeat the time embedding to match the shape of x
+        t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
+        x = x + t
+
+        x = self.dropout(x)
         x = self.conv2(x)
+        return x
+
+
+class Bottleneck(nn.Module):
+    def __init__(self, channels, dropout, time_embedding_dim):
+        super().__init__()
+        self.channels = channels
+        in_channels = channels
+        out_channels = channels * 2
+        self.conv1 = DoubleConv(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            dropout=dropout,
+            time_embedding_dim=time_embedding_dim
+        )
+        self.attn = SelfAttentionBlock(
+            channels=out_channels,
+        )
+        self.conv2 = DoubleConv(
+            in_channels=out_channels,
+            out_channels=out_channels,
+            dropout=dropout,
+            time_embedding_dim=time_embedding_dim
+        ) 
+    
+    def forward(self, x, t):
+        x = self.conv1(x, t)
+        x = self.attn(x)
+        x = self.conv2(x, t)
         return x
 
 
@@ -211,6 +258,7 @@ class Unet(nn.Module):
         self,
         image_channels,
         time_embedding_dim=128,
+        dropout=0,
     ):
         super().__init__()
         self.image_channels = image_channels
@@ -218,12 +266,13 @@ class Unet(nn.Module):
 
         # Wide U-Net, i.e. num channels are increased as we celntract
         starting_channels = 64
+        C = starting_channels
         channels_list_down = [
             # (image_channels, starting_channels),
-            (3, 64),
-            (64, 128),
-            (128, 256),
-            (256, 512),
+            (3, C),
+            (C, 2*C),
+            (2*C, 4*C),
+            (4*C, 8*C),
             #(512, 1024),
             #(starting_channels * 4, starting_channels * 8),
         ]
@@ -234,13 +283,18 @@ class Unet(nn.Module):
         # 24 x 16
         # 12 x 8
 
+        # 32 x 32
+        # 16 x 16
+        # 8 x 8
+        # 4 x 4
+
         channels_list_up = [
             #(starting_channels * 8 * 2, starting_channels * 4 * 2),
             #(2048, 1024),
-            (1024, 512),
-            (512, 256),
-            (256, 128),
-            (128, 64),
+            (16*C, 8*C),
+            (8*C, 4*C),
+            (4*C, 2*C),
+            (2*C, C),
         ]
 
         use_attn = [
@@ -252,18 +306,18 @@ class Unet(nn.Module):
 
         self.contracting_path = nn.ModuleList(
             [
-                DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn)
+                DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout)
                 for (in_channels, out_channels), attn in zip(channels_list_down, use_attn)
             ]
         )
 
-        self.bottleneck = Bottleneck(channels=channels_list_down[-1][-1]) 
+        self.bottleneck = Bottleneck(channels=channels_list_down[-1][-1], time_embedding_dim=time_embedding_dim, dropout=dropout) 
 
         self.expansive_path = nn.ModuleList(
             [
                 # multiply by 2 since we concatenate the channels from the contracting path
                 # also because of bottleneck doubling the channels
-                UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim)
+                UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, dropout=dropout)
                 for (in_channels, out_channels), attn in zip(channels_list_up, reversed(use_attn))
             ]
         )
@@ -294,7 +348,7 @@ class Unet(nn.Module):
             x, residual = contracting_block(x, t)
             contracting_residuals.append(residual)
 
-        x = self.bottleneck(x)
+        x = self.bottleneck(x, t)
 
         for expansive_block, residual in zip(
             self.expansive_path, reversed(contracting_residuals)
