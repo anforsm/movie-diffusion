@@ -154,6 +154,7 @@ class GaussianDiffusion:
     """
     Calculate the loss on the validation set
     """
+    self.model.eval()
     acc_loss = 0
     for batch in dataloader:
       t = self.sample_time_steps(batch_size=batch.shape[0])
@@ -163,6 +164,7 @@ class GaussianDiffusion:
       predicted_noise = self.model(noisy_image, t)
       loss = nn.MSELoss()(predicted_noise, added_noise)
       acc_loss += loss.item()
+    self.model.train()
     return acc_loss / len(dataloader)
 
 class DiffusionImageAPI:
