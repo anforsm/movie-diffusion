@@ -13,7 +13,7 @@ from unet import Unet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
-from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TRAIN_DATASET, HF_VAL_DATASET, VAL_EVERY_N_STEPS, IMAGE_EVERY_N_STEPS, EPOCHS, HF_IMAGE_KEY, HF_TRAIN_SPLIT, HF_VAL_SPLIT, BETA_SCHEDULE
+from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TRAIN_DATASET, HF_VAL_DATASET, VAL_EVERY_N_STEPS, IMAGE_EVERY_N_STEPS, EPOCHS, HF_IMAGE_KEY, HF_TRAIN_SPLIT, HF_VAL_SPLIT, BETA_SCHEDULE, NOISE_STEPS
 
 if LOG_WANDB:
   import wandb
@@ -66,7 +66,7 @@ def train():
 
   diffusion = GaussianDiffusion(
     model=model,
-    noise_steps=256,
+    noise_steps=NOISE_STEPS,
     #noise_steps=1024,
     beta_0=1e-4,
     beta_T=0.02,
