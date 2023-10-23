@@ -156,14 +156,15 @@ class GaussianDiffusion:
     """
     self.model.eval()
     acc_loss = 0
-    for batch in dataloader:
-      t = self.sample_time_steps(batch_size=batch.shape[0])
-      noisy_image, added_noise = self.apply_noise(batch, t)
-      noisy_image = noisy_image.to(self.device)
-      added_noise = added_noise.to(self.device)
-      predicted_noise = self.model(noisy_image, t)
-      loss = nn.MSELoss()(predicted_noise, added_noise)
-      acc_loss += loss.item()
+    with torch.no_grad():
+      for batch in dataloader:
+        t = self.sample_time_steps(batch_size=batch.shape[0])
+        noisy_image, added_noise = self.apply_noise(batch, t)
+        noisy_image = noisy_image.to(self.device)
+        added_noise = added_noise.to(self.device)
+        predicted_noise = self.model(noisy_image, t)
+        loss = nn.MSELoss()(predicted_noise, added_noise)
+        acc_loss += loss.item()
     self.model.train()
     return acc_loss / len(dataloader)
 
