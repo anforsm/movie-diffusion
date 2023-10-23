@@ -1,5 +1,13 @@
 import torch
 import torch.nn as nn
+from collections import defaultdict
+
+str_to_act = defaultdict(lambda: nn.ReLU())
+str_to_act.update({
+    "relu": nn.ReLU(),
+    "silu": nn.SiLU(),
+    "gelu": nn.GELU(),
+})
 
 
 class SinusoidalPositionalEncoding(nn.Module):
@@ -18,7 +26,7 @@ class SinusoidalPositionalEncoding(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels, act="relu"):
         super().__init__()
 
         self.conv = nn.Conv2d(
@@ -34,12 +42,55 @@ class ConvBlock(nn.Module):
             num_channels=out_channels,
         )
 
-        self.act = nn.ReLU()
+        self.act = str_to_act[act]
 
     def forward(self, x):
         x = self.conv(x)
         x = self.norm(x)
         x = self.act(x)
+        return x
+
+class EmbeddingBlock(nn.Module):
+    def __init__(self, channels: int, emb_dim: int, act="relu"):
+        super().__init__()
+
+        self.lin = nn.Linear(emb_dim, channels)
+        self.act = str_to_act[act]
+    
+    def forward(self, x):
+        x = self.lin(x)
+        x = self.act(x)
+        return x
+
+class ResBlock(nn.Module):
+    def __init__(self, channels: int, emb_dim: int, dropout: float = 0, out_channels=None):
+        """A resblock with a time embedding and an optional change in channel count
+        """
+        if out_channels is None:
+            out_channels = channels
+        super().__init__()
+
+        self.conv1 = ConvBlock(channels, out_channels)
+        
+        self.emb = EmbeddingBlock(out_channels) 
+
+        self.conv2 = ConvBlock(out_channels, out_channels)
+
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, x, t):
+        x = self.conv1(x)
+
+        t = self.emb(t)
+        # t: (batch_size, time_embedding_dim) = (batch_size, out_channels)
+        # x: (batch_size, out_channels, height, width)
+        # we repeat the time embedding to match the shape of x
+        t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
+
+        x = x + t
+
+        x = self.conv2(x)
+        x = self.dropout(x)
         return x
 
 class SelfAttentionBlock(nn.Module):
@@ -75,21 +126,11 @@ class DownBlock(nn.Module):
         super().__init__()
         self.use_attn = use_attn
 
-        self.time_embedding_layer = nn.Sequential(
-            nn.Linear(time_embedding_dim, out_channels),
-            nn.ReLU(),
-        )
-
-        self.conv1 = ConvBlock(
-            in_channels=in_channels,
+        self.resblock = ResBlock(
+            channels=in_channels,
             out_channels=out_channels,
-        )
-
-        self.dropout = nn.Dropout(dropout)
-
-        self.conv2 = ConvBlock(
-            in_channels=out_channels,
-            out_channels=out_channels,
+            emb_dim=time_embedding_dim,
+            dropout=dropout,
         )
 
         self.downsample = nn.MaxPool2d(
@@ -107,10 +148,7 @@ class DownBlock(nn.Module):
         residual = x
         x = self.downsample(x)
         t = self.time_embedding_layer(t)
-        # t: (batch_size, time_embedding_dim) = (batch_size, out_channels)
-        # x: (batch_size, out_channels, height, width)
-        # we repeat the time embedding to match the shape of x
-        t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
+
         x = x + t
 
         x = self.dropout(x)
