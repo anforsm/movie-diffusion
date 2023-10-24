@@ -300,9 +300,9 @@ class Unet(nn.Module):
         channels_list_up = [
             #(16*C, 8*C),
             (2*8*C, 2*4*C),
-            (2*4*C, 2*2*C),
-            (2*2*C, 2*C),
-            (2*C, C),
+            (2*4*C + 2*2*C, 2*2*C),
+            (2*2*C + 2*C, 2*C),
+            (2*C + C, C),
         ]
 
         use_attn = [
@@ -367,7 +367,11 @@ class Unet(nn.Module):
         for expansive_block, residual in zip(
             self.expansive_path, reversed(residuals)
         ):
+            #print(x.shape)
+            #print(residual.shape)
             x = torch.cat([x, residual], dim=1)
+            #print(x.shape)
+            #print(expansive_block)
             x = expansive_block(x, t)
 
         x = self.head(x)
