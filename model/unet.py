@@ -142,7 +142,7 @@ class Downsample(nn.Module):
         self.down = nn.Conv2d(
             in_channels=channels,
             out_channels=channels,
-            kernel_size=3,
+            kernel_size=2,
             stride=2,
             padding=1,
         )
@@ -196,7 +196,7 @@ class Upsample(nn.Module):
         self.conv = nn.Conv2d(
             in_channels=channels,
             out_channels=channels,
-            kernel_size=3,
+            kernel_size=2,
             padding=1,
         )
     
