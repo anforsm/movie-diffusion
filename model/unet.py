@@ -89,9 +89,9 @@ class ResBlock(nn.Module):
         
         self.emb = EmbeddingBlock(out_channels, emb_dim) 
 
+        self.dropout = nn.Dropout(dropout)
         self.conv2 = ConvBlock(out_channels, out_channels)
 
-        self.dropout = nn.Dropout(dropout)
     
     def forward(self, x, t):
         x = self.conv1(x)
@@ -104,8 +104,8 @@ class ResBlock(nn.Module):
 
         x = x + t
 
-        x = self.conv2(x)
         x = self.dropout(x)
+        x = self.conv2(x)
         return x
 
 class SelfAttentionBlock(nn.Module):
