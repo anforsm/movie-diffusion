@@ -97,8 +97,14 @@ class ResBlock(nn.Module):
         #self.dropout = nn.Dropout(dropout)
         self.conv2 = ConvBlock(out_channels, out_channels, dropout=dropout)
 
+        if channels != out_channels:
+            self.skip_connection = nn.Conv2d(channels, out_channels, kernel_size=1)
+        else:
+            self.skip_connection = nn.Identity()
+
     
     def forward(self, x, t):
+        original = x
         x = self.conv1(x)
 
         t = self.emb(t)
@@ -111,6 +117,7 @@ class ResBlock(nn.Module):
 
         #x = self.dropout(x)
         x = self.conv2(x)
+        x = x + self.skip_connection(original)
         return x
 
 class SelfAttentionBlock(nn.Module):
@@ -159,10 +166,11 @@ class DownBlock(nn.Module):
     for downsampling. At each downsampling step we double the number of feature channels.'
     """
 
-    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0):
+    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0, downsample=True):
         """in_channels will typically be half of out_channels"""
         super().__init__()
         self.use_attn = use_attn
+        self.do_downsample = downsample
 
         self.resblock = ResBlock(
             channels=in_channels,
@@ -176,7 +184,8 @@ class DownBlock(nn.Module):
                 channels=out_channels,
             )
 
-        self.downsample = Downsample(out_channels) 
+        if self.do_downsample:
+            self.downsample = Downsample(out_channels) 
 
     def forward(self, x, t):
         x = self.resblock(x, t)
@@ -184,7 +193,8 @@ class DownBlock(nn.Module):
         if self.use_attn:
             x = self.attn(x)
 
-        x = self.downsample(x)
+        if self.do_downsample:
+            x = self.downsample(x)
         return x
 
 
@@ -213,11 +223,12 @@ class UpBlock(nn.Module):
     each followed by a ReLU.
     """
 
-    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0):
+    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0, upsample=True):
         """in_channels will typically be double of out_channels
         """
         super().__init__()
         self.use_attn = use_attn
+        self.do_upsample = upsample
 
         self.resblock = ResBlock(
             channels=in_channels,
@@ -231,7 +242,8 @@ class UpBlock(nn.Module):
                 channels=out_channels,
             )
         
-        self.upsample = Upsample(out_channels)
+        if self.do_upsample:
+            self.upsample = Upsample(out_channels)
 
     def forward(self, x, t, residual=None):
         x = self.resblock(x, t)
@@ -239,7 +251,8 @@ class UpBlock(nn.Module):
         if self.use_attn:
             x = self.attn(x)
 
-        x = self.upsample(x)
+        if self.do_upsample:
+            x = self.upsample(x)
         return x
 
 class Bottleneck(nn.Module):
@@ -285,41 +298,67 @@ class Unet(nn.Module):
         self.time_embedding = TimeEmbedding(model_dim=C, emb_dim=time_embedding_dim)
 
         #self.input = ConvBlock(3, C)
-        self.input = nn.Conv2d(3, C, kernel_size=3, padding=1)
+
+        channel_mults = (1, 2, 4, 8)
+
+        channels_list_down = [
+            (C                      , channel_mults[0] * C),
+            (channel_mults[0] * C   , channel_mults[1] * C),
+            (channel_mults[1] * C   , channel_mults[2] * C),
+            (channel_mults[2] * C   , channel_mults[3] * C),
+        ]
 
         # Wide U-Net, i.e. num channels are increased as we celntract
-        channels_list_down = [
-            # (image_channels, starting_channels),
-            (C, C),
-            (C, 2*C),
-            (2*C, 4*C),
-            (4*C, 8*C),
-            #(8*C, 16*C),
-        ]
+        #channels_list_down = [
+        #    # (image_channels, starting_channels),
+        #    (C, C),
+        #    (C, 2*C),
+        #    (2*C, 4*C),
+        #    (4*C, 8*C),
+        #    #(8*C, 16*C),
+        #]
 
         channels_list_up = [
-            #(16*C, 8*C),
-            (2*8*C, 2*4*C),
-            (2*4*C + 2*2*C, 2*2*C),
-            (2*2*C + 2*C, 2*C),
-            (2*C + C, C),
+            (2 * channel_mults[3] * C                        , channel_mults[3] * C),
+
+            (2 * channel_mults[2] * C + channel_mults[2] * C , channel_mults[3] * C),
+            (2 * channel_mults[2] * C + channel_mults[2] * C , channel_mults[2] * C),
+
+            (2 * channel_mults[1] * C + channel_mults[1] * C , channel_mults[2] * C),
+            (2 * channel_mults[1] * C + channel_mults[1] * C , channel_mults[1] * C),
+
+            (2 * channel_mults[0] * C + channel_mults[0] * C , channel_mults[1] * C),
+            (2 * channel_mults[0] * C + channel_mults[0] * C , channel_mults[0] * C),
+
+            (2 * channel_mults[0] * C                        , channel_mults[0] * C),
         ]
+
+        #channels_list_up = [
+        #    #(16*C, 8*C),
+        #    (2*8*C, 2*4*C),
+        #    (2*4*C + 2*2*C, 2*2*C),
+        #    (2*2*C + 2*C, 2*C),
+        #    (2*C + C, C),
+        #]
 
         use_attn = [
             False,
             False, 
-            #False,
-            #False, 
-            True,
-            True,
+            False,
+            False, 
+            #True,
+            #True,
         ]
 
         self.contracting_path = nn.ModuleList(
             [
-                DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout)
-                for (in_channels, out_channels), attn in zip(channels_list_down, use_attn)
+                nn.Conv2d(3, C, kernel_size=3, padding=1)
             ]
         )
+        for i, ((in_channels, out_channels), attn) in enumerate(zip(channels_list_down, use_attn)):
+            self.contracting_path.append(DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout, downsample=False))
+            if i != len(channels_list_down) - 1:
+                self.contracting_path.append(Downsample(out_channels))
 
         self.bottleneck = Bottleneck(channels=channels_list_down[-1][-1], time_embedding_dim=time_embedding_dim, dropout=dropout) 
 
@@ -327,8 +366,10 @@ class Unet(nn.Module):
             [
                 # multiply by 2 since we concatenate the channels from the contracting path
                 # also because of bottleneck doubling the channels
-                UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout)
-                for (in_channels, out_channels), attn in zip(channels_list_up, reversed(use_attn))
+                #UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout, upsample=i != 0)
+                #for i, ((in_channels, out_channels), attn) in enumerate(zip(channels_list_up, reversed(use_attn)))
+                UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=False, dropout=dropout, upsample=i != 0 and i % 2 == 1 and i != len(channels_list_up) - 1)
+                for i, (in_channels, out_channels) in enumerate(channels_list_up)
             ]
         )
 
@@ -351,7 +392,7 @@ class Unet(nn.Module):
         t = self.time_encoding(t)
         t = self.time_embedding(t)
 
-        x = self.input(x)
+        #x = self.input(x)
 
         residuals = []
         # x: (1, 3, 120, 80)
@@ -360,20 +401,18 @@ class Unet(nn.Module):
         # x: (1, 256, 30, 20)
         # x: (1, 512, 15, 10)
         for contracting_block in self.contracting_path:
-            x = contracting_block(x, t)
+            if isinstance(contracting_block, Downsample) or isinstance(contracting_block, nn.Conv2d):
+                x = contracting_block(x)
+            else:
+                x = contracting_block(x, t)
             residuals.append(x)
 
         x = self.bottleneck(x, t)
 
-        #print([x.shape for x in residuals])
         for expansive_block, residual in zip(
             self.expansive_path, reversed(residuals)
         ):
-            #print(x.shape)
-            #print(residual.shape)
             x = torch.cat([x, residual], dim=1)
-            #print(x.shape)
-            #print(expansive_block)
             x = expansive_block(x, t)
 
         x = self.head(x)
