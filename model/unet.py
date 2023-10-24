@@ -5,8 +5,7 @@ from collections import defaultdict
 
 str_to_act = defaultdict(lambda: nn.ReLU())
 str_to_act.update({
-    #"relu": nn.ReLU(),
-    "relu": nn.SiLU(),
+    "relu": nn.ReLU(),
     "silu": nn.SiLU(),
     "gelu": nn.GELU(),
 })
@@ -142,7 +141,7 @@ class Downsample(nn.Module):
         self.down = nn.Conv2d(
             in_channels=channels,
             out_channels=channels,
-            kernel_size=2,
+            kernel_size=3,
             stride=2,
             padding=1,
         )
@@ -196,7 +195,7 @@ class Upsample(nn.Module):
         self.conv = nn.Conv2d(
             in_channels=channels,
             out_channels=channels,
-            kernel_size=2,
+            kernel_size=3,
             padding=1,
         )
     
@@ -266,7 +265,7 @@ class Bottleneck(nn.Module):
     
     def forward(self, x, t):
         x = self.resblock_1(x, t)
-        #x = self.attention_block(x)
+        x = self.attention_block(x)
         x = self.resblock_2(x, t)
         return x
 
@@ -309,10 +308,10 @@ class Unet(nn.Module):
         use_attn = [
             False,
             False, 
-            False,
-            False, 
-            #True,
-            #True,
+            #False,
+            #False, 
+            True,
+            True,
         ]
 
         self.contracting_path = nn.ModuleList(
