@@ -41,8 +41,18 @@ class TimeEmbedding(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, act="relu"):
+    def __init__(self, in_channels, out_channels, act="relu", dropout=None):
         super().__init__()
+
+        self.norm = nn.GroupNorm(
+            num_groups=32,
+            num_channels=in_channels,
+        )
+
+        self.act = str_to_act[act]
+
+        if dropout is not None:
+            self.dropout = nn.Dropout(dropout)
 
         self.conv = nn.Conv2d(
             in_channels=in_channels,
@@ -51,30 +61,25 @@ class ConvBlock(nn.Module):
             padding=1,
         )
 
-        # Add GroupNorm according to DDPM paper
-        self.norm = nn.GroupNorm(
-            num_groups=32,
-            num_channels=out_channels,
-        )
-
-        self.act = str_to_act[act]
-
+        
     def forward(self, x):
-        x = self.conv(x)
         x = self.norm(x)
         x = self.act(x)
+        if hasattr(self, "dropout"):
+            x = self.dropout(x)
+        x = self.conv(x)
         return x
 
 class EmbeddingBlock(nn.Module):
     def __init__(self, channels: int, emb_dim: int, act="relu"):
         super().__init__()
 
-        self.lin = nn.Linear(emb_dim, channels)
         self.act = str_to_act[act]
+        self.lin = nn.Linear(emb_dim, channels)
     
     def forward(self, x):
-        x = self.lin(x)
         x = self.act(x)
+        x = self.lin(x)
         return x
 
 class ResBlock(nn.Module):
@@ -89,8 +94,8 @@ class ResBlock(nn.Module):
         
         self.emb = EmbeddingBlock(out_channels, emb_dim) 
 
-        self.dropout = nn.Dropout(dropout)
-        self.conv2 = ConvBlock(out_channels, out_channels)
+        #self.dropout = nn.Dropout(dropout)
+        self.conv2 = ConvBlock(out_channels, out_channels, dropout=dropout)
 
     
     def forward(self, x, t):
@@ -104,7 +109,7 @@ class ResBlock(nn.Module):
 
         x = x + t
 
-        x = self.dropout(x)
+        #x = self.dropout(x)
         x = self.conv2(x)
         return x
 
@@ -279,7 +284,8 @@ class Unet(nn.Module):
         self.time_encoding = SinusoidalPositionalEncoding(dim=C)
         self.time_embedding = TimeEmbedding(model_dim=C, emb_dim=time_embedding_dim)
 
-        self.input = ConvBlock(3, C)
+        #self.input = ConvBlock(3, C)
+        self.input = nn.Conv2d(3, C, kernel_size=3, padding=1)
 
         # Wide U-Net, i.e. num channels are increased as we celntract
         channels_list_down = [
@@ -293,17 +299,19 @@ class Unet(nn.Module):
 
         channels_list_up = [
             #(16*C, 8*C),
-            (8*C, 4*C),
-            (4*C, 2*C),
+            (2*8*C, 2*4*C),
+            (2*4*C, 2*2*C),
+            (2*2*C, 2*C),
             (2*C, C),
-            (C, C),
         ]
 
         use_attn = [
             False,
             False, 
-            True,
-            True,
+            False,
+            False, 
+            #True,
+            #True,
         ]
 
         self.contracting_path = nn.ModuleList(
@@ -319,7 +327,7 @@ class Unet(nn.Module):
             [
                 # multiply by 2 since we concatenate the channels from the contracting path
                 # also because of bottleneck doubling the channels
-                UpBlock(in_channels=in_channels + in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout)
+                UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout)
                 for (in_channels, out_channels), attn in zip(channels_list_up, reversed(use_attn))
             ]
         )
