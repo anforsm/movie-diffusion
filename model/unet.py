@@ -1,3 +1,4 @@
+from typing import Any
 import torch
 import torch.nn as nn
 from collections import defaultdict
@@ -24,6 +25,20 @@ class SinusoidalPositionalEncoding(nn.Module):
         pos_enc = torch.cat([sin_enc, cos_enc], dim=-1)
         return pos_enc
 
+class TimeEmbedding(nn.Module):
+    def __init__(self, model_dim: int, emb_dim: int, act="relu"):
+        super().__init__()
+
+        self.lin = nn.Linear(model_dim, emb_dim)
+        self.act = str_to_act[act]
+        self.lin2 = nn.Linear(emb_dim, emb_dim)
+    
+    def forward(self, x):
+        x = self.lin(x)
+        x = self.act(x)
+        x = self.lin2(x)
+        return x
+
 
 class ConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels, act="relu"):
@@ -33,12 +48,12 @@ class ConvBlock(nn.Module):
             in_channels=in_channels,
             out_channels=out_channels,
             kernel_size=3,
-            padding="same",
+            padding=1,
         )
 
         # Add GroupNorm according to DDPM paper
         self.norm = nn.GroupNorm(
-            num_groups=1,
+            num_groups=32,
             num_channels=out_channels,
         )
 
@@ -72,7 +87,7 @@ class ResBlock(nn.Module):
 
         self.conv1 = ConvBlock(channels, out_channels)
         
-        self.emb = EmbeddingBlock(out_channels) 
+        self.emb = EmbeddingBlock(out_channels, emb_dim) 
 
         self.conv2 = ConvBlock(out_channels, out_channels)
 
@@ -111,6 +126,24 @@ class SelfAttentionBlock(nn.Module):
         x = self.transformer(x)
         return x.swapaxes(1, 2).view(batch_size, channels, height, width)
 
+class Downsample(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        # ddpm uses maxpool
+        # self.down = nn.MaxPool2d
+
+        # iddpm uses strided conv
+        self.down = nn.Conv2d(
+            in_channels=channels,
+            out_channels=channels,
+            kernel_size=3,
+            stride=2,
+            padding=1,
+        )
+    
+    def forward(self, x):
+        return self.down(x)
+
 
 class DownBlock(nn.Module):
     """According to U-Net paper
@@ -133,31 +166,38 @@ class DownBlock(nn.Module):
             dropout=dropout,
         )
 
-        self.downsample = nn.MaxPool2d(
-            kernel_size=2,
-            stride=2,
-        )
-
         if self.use_attn:
             self.attn = SelfAttentionBlock(
                 channels=out_channels,
             )
 
+        self.downsample = Downsample(out_channels) 
+
     def forward(self, x, t):
-        x = self.conv1(x)
-        residual = x
-        x = self.downsample(x)
-        t = self.time_embedding_layer(t)
-
-        x = x + t
-
-        x = self.dropout(x)
-        x = self.conv2(x)
+        x = self.resblock(x, t)
 
         if self.use_attn:
             x = self.attn(x)
-        return x, residual
 
+        x = self.downsample(x)
+        return x
+
+
+class Upsample(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.upsample = nn.Upsample(scale_factor=2)
+        self.conv = nn.Conv2d(
+            in_channels=channels,
+            out_channels=channels,
+            kernel_size=3,
+            padding=1,
+        )
+    
+    def forward(self, x):
+        x = self.upsample(x)
+        x = self.conv(x)
+        return x
 
 class UpBlock(nn.Module):
     """According to U-Net paper
@@ -174,122 +214,55 @@ class UpBlock(nn.Module):
         super().__init__()
         self.use_attn = use_attn
 
-        self.time_embedding_layer = nn.Sequential(
-            nn.Linear(time_embedding_dim, out_channels),
-            nn.ReLU(),
-        )
-
-        self.upsample = nn.Upsample(scale_factor=2)
-        self.up_conv = nn.Conv2d(
-            # double the number of input channels, since we concatenate
-            # the channels with those from the residual
-            in_channels=in_channels,
+        self.resblock = ResBlock(
+            channels=in_channels,
             out_channels=out_channels,
-            kernel_size=2,
-            padding="same"
-        )
-
-        self.conv1 = ConvBlock(
-            in_channels=in_channels,
-            out_channels=out_channels,
-        )
-
-        self.dropout = nn.Dropout(dropout)
-
-        self.conv2 = ConvBlock(
-            in_channels=out_channels,
-            out_channels=out_channels,
+            emb_dim=time_embedding_dim,
+            dropout=dropout,
         )
 
         if self.use_attn:
             self.attn = SelfAttentionBlock(
                 channels=out_channels,
             )
+        
+        self.upsample = Upsample(out_channels)
 
     def forward(self, x, t, residual=None):
-        x = self.upsample(x)
-        x = self.up_conv(x)
-
-        if residual is not None:
-            x = torch.cat([x, residual], dim=1)
-
-        x = self.conv1(x)
-
-        t = self.time_embedding_layer(t)
-        # t: (batch_size, time_embedding_dim) = (batch_size, out_channels)
-        # x: (batch_size, out_channels, height, width)
-        # we repeat the time embedding to match the shape of x
-        t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
-        x = x + t
-
-        x = self.dropout(x)
-        x = self.conv2(x)
+        x = self.resblock(x, t)
 
         if self.use_attn:
             x = self.attn(x)
+
+        x = self.upsample(x)
         return x
-
-class DoubleConv(nn.Module):
-    def __init__(self, in_channels, out_channels, dropout, time_embedding_dim):
-        super().__init__()
-        self.time_embedding_layer = nn.Sequential(
-            nn.Linear(time_embedding_dim, out_channels),
-            nn.ReLU(),
-        )
-
-        self.conv1 = ConvBlock(
-            in_channels=in_channels,
-            out_channels=out_channels,
-        )
-        self.dropout = nn.Dropout(dropout)
-        self.conv2 = ConvBlock(
-            in_channels=out_channels,
-            out_channels=out_channels,
-        )
-    
-    def forward(self, x, t):
-        x = self.conv1(x)
-        
-        t = self.time_embedding_layer(t)
-        # t: (batch_size, time_embedding_dim) = (batch_size, out_channels)
-        # x: (batch_size, out_channels, height, width)
-        # we repeat the time embedding to match the shape of x
-        t = t.unsqueeze(-1).unsqueeze(-1).repeat(1, 1, x.shape[2], x.shape[3])
-        x = x + t
-
-        x = self.dropout(x)
-        x = self.conv2(x)
-        return x
-
 
 class Bottleneck(nn.Module):
     def __init__(self, channels, dropout, time_embedding_dim):
         super().__init__()
-        self.channels = channels
         in_channels = channels
-        out_channels = channels * 2
-        self.conv1 = DoubleConv(
-            in_channels=in_channels,
+        out_channels = channels
+        self.resblock_1 = ResBlock(
+            channels=in_channels,
             out_channels=out_channels,
             dropout=dropout,
-            time_embedding_dim=time_embedding_dim
+            emb_dim=time_embedding_dim
         )
-        self.attn = SelfAttentionBlock(
+        self.attention_block = SelfAttentionBlock(
             channels=out_channels,
         )
-        self.conv2 = DoubleConv(
-            in_channels=out_channels,
+        self.resblock_2 = ResBlock(
+            channels=out_channels,
             out_channels=out_channels,
             dropout=dropout,
-            time_embedding_dim=time_embedding_dim
+            emb_dim=time_embedding_dim
         ) 
     
     def forward(self, x, t):
-        x = self.conv1(x, t)
-        x = self.attn(x)
-        x = self.conv2(x, t)
+        x = self.resblock_1(x, t)
+        x = self.attention_block(x)
+        x = self.resblock_2(x, t)
         return x
-
 
 class Unet(nn.Module):
     def __init__(
@@ -299,36 +272,25 @@ class Unet(nn.Module):
         dropout=0,
     ):
         super().__init__()
-        self.image_channels = image_channels
-        self.time_encoding = SinusoidalPositionalEncoding(dim=time_embedding_dim)
-
-        # Wide U-Net, i.e. num channels are increased as we celntract
         starting_channels = 64
         C = starting_channels
+
+        self.image_channels = image_channels
+        self.time_encoding = SinusoidalPositionalEncoding(dim=C)
+        self.time_embedding = TimeEmbedding(model_dim=C, emb_dim=time_embedding_dim)
+
+        self.input = ConvBlock(3, C)
+
+        # Wide U-Net, i.e. num channels are increased as we celntract
         channels_list_down = [
             # (image_channels, starting_channels),
-            (3, C),
             (C, 2*C),
             (2*C, 4*C),
             (4*C, 8*C),
-            #(512, 1024),
-            #(starting_channels * 4, starting_channels * 8),
+            (8*C, 16*C),
         ]
-        # image size
-        # 192 x 128
-        # 96 x 64
-        # 48 x 32
-        # 24 x 16
-        # 12 x 8
-
-        # 32 x 32
-        # 16 x 16
-        # 8 x 8
-        # 4 x 4
 
         channels_list_up = [
-            #(starting_channels * 8 * 2, starting_channels * 4 * 2),
-            #(2048, 1024),
             (16*C, 8*C),
             (8*C, 4*C),
             (4*C, 2*C),
@@ -355,7 +317,7 @@ class Unet(nn.Module):
             [
                 # multiply by 2 since we concatenate the channels from the contracting path
                 # also because of bottleneck doubling the channels
-                UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, dropout=dropout)
+                UpBlock(in_channels=in_channels + in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout)
                 for (in_channels, out_channels), attn in zip(channels_list_up, reversed(use_attn))
             ]
         )
@@ -364,8 +326,8 @@ class Unet(nn.Module):
             nn.Conv2d(
                 in_channels=starting_channels,
                 out_channels=image_channels,
-                kernel_size=1,
-                padding="same",
+                kernel_size=3,
+                padding=1,
             )
         )
 
@@ -375,23 +337,28 @@ class Unet(nn.Module):
         #x = torch.einsum("bhwc->bchw", x)
         # x: (batch_size, channels, height, width)
         t = self.time_encoding(t)
+        t = self.time_embedding(t)
 
-        contracting_residuals = []
+        x = self.input(x)
+
+        residuals = []
         # x: (1, 3, 120, 80)
         # x: (1, 64, 120, 80)
         # x: (1, 128, 60, 40)
         # x: (1, 256, 30, 20)
         # x: (1, 512, 15, 10)
         for contracting_block in self.contracting_path:
-            x, residual = contracting_block(x, t)
-            contracting_residuals.append(residual)
+            x = contracting_block(x, t)
+            residuals.append(x)
 
         x = self.bottleneck(x, t)
 
+        #print([x.shape for x in residuals])
         for expansive_block, residual in zip(
-            self.expansive_path, reversed(contracting_residuals)
+            self.expansive_path, reversed(residuals)
         ):
-            x = expansive_block(x, t, residual)
+            x = torch.cat([x, residual], dim=1)
+            x = expansive_block(x, t)
 
         x = self.head(x)
         # x: (1, 3, 120, 80)
