@@ -5,7 +5,8 @@ from collections import defaultdict
 
 str_to_act = defaultdict(lambda: nn.ReLU())
 str_to_act.update({
-    "relu": nn.ReLU(),
+    #"relu": nn.ReLU(),
+    "relu": nn.SiLU(),
     "silu": nn.SiLU(),
     "gelu": nn.GELU(),
 })
@@ -265,7 +266,7 @@ class Bottleneck(nn.Module):
     
     def forward(self, x, t):
         x = self.resblock_1(x, t)
-        x = self.attention_block(x)
+        #x = self.attention_block(x)
         x = self.resblock_2(x, t)
         return x
 
