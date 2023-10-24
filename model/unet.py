@@ -284,7 +284,7 @@ class Unet(nn.Module):
         # Wide U-Net, i.e. num channels are increased as we celntract
         channels_list_down = [
             # (image_channels, starting_channels),
-            (C, C)
+            (C, C),
             (C, 2*C),
             (2*C, 4*C),
             (4*C, 8*C),
@@ -296,7 +296,7 @@ class Unet(nn.Module):
             (8*C, 4*C),
             (4*C, 2*C),
             (2*C, C),
-            (C, C)
+            (C, C),
         ]
 
         use_attn = [
