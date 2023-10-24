@@ -6,9 +6,9 @@ import torch as th
 import numpy as np
 import math
 
-str_to_act = defaultdict(lambda: nn.ReLU())
+str_to_act = defaultdict(lambda: nn.SiLU())
 str_to_act.update({
-    "relu": nn.ReLU(),
+    "relu": nn.SiLU(),
     "silu": nn.SiLU(),
     "gelu": nn.GELU(),
 })
@@ -461,7 +461,7 @@ class Unet(nn.Module):
 
         self.head = nn.Sequential(
             nn.GroupNorm(32, starting_channels),
-            nn.ReLU(),
+            nn.SiLU(),
             zero_module(nn.Conv2d(
                 in_channels=starting_channels,
                 out_channels=image_channels,
