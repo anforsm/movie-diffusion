@@ -333,6 +333,8 @@ class Unet(nn.Module):
         )
 
         self.head = nn.Sequential(
+            nn.GroupNorm(32, starting_channels),
+            nn.ReLU(),
             nn.Conv2d(
                 in_channels=starting_channels,
                 out_channels=image_channels,
