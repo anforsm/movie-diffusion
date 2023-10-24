@@ -10,6 +10,7 @@ import numpy as np
 from datasets import load_dataset
 
 from unet import Unet
+from openai_unet import OpenAIUNet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
@@ -59,9 +60,23 @@ def train():
     drop_last=True,
   )
 
-  model = Unet(
-    image_channels=3,
-    dropout=DROPOUT,
+  #model = Unet(
+  #  image_channels=3,
+  #  dropout=DROPOUT,
+  #)
+  model = OpenAIUNet(
+    in_channels=3,
+    out_channels=3,
+    model_channels=128,
+    num_res_blocks=3,
+    attention_resolutions=[8,16],
+    dropout=0.1,
+    channel_mult=(1,2,2,2),
+    num_classes=None,
+    use_checkpoint=False,
+    num_heads=4,
+    num_heads_upsample=-1,
+    use_scale_shift_norm=True
   )
   print(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters")
 

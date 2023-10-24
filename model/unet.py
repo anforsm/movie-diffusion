@@ -403,7 +403,8 @@ class Unet(nn.Module):
 
         #self.input = ConvBlock(3, C)
 
-        channel_mults = (1, 2, 4, 8)
+        #channel_mults = (1, 2, 4, 8)
+        channel_mults = (1, 2, 2, 2)
 
         channels_list_down = [
             (C                      , channel_mults[0] * C),
@@ -453,18 +454,43 @@ class Unet(nn.Module):
             #True,
             #True,
         ]
+        attn_res = [
+            16,
+            8,
+        ]
 
         self.contracting_path = nn.ModuleList(
             [
                 nn.Conv2d(3, C, kernel_size=3, padding=1)
             ]
         )
-        for i, ((in_channels, out_channels), attn) in enumerate(zip(channels_list_down, use_attn)):
-            self.contracting_path.append(DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout, downsample=False, width=res_block_width))
-            if i != len(channels_list_down) - 1:
-                self.contracting_path.append(Downsample(out_channels))
+        input_chs = []
+        ch = C
+        dimensions = 1
+        for i, mult in enumerate(channel_mults):
+            self.contracting_path.append(DownBlock(
+                in_channels=ch,
+                out_channels=mult * ch,
+                time_embedding_dim=time_embedding_dim,
+                use_attn=dimensions in attn_res,
+                dropout=dropout,
+                downsample=i != len(channel_mults) - 1,
+                width=res_block_width,
+            ))
+            ch = mult * C
+            input_chs.append(ch)
+            if i != len(channel_mults) - 1:
+                self.contracting_path.append(Downsample(ch))
+                input_chs.append(ch)
+                dimensions *= 2
 
-        self.bottleneck = Bottleneck(channels=channels_list_down[-1][-1], time_embedding_dim=time_embedding_dim, dropout=dropout) 
+        #for i, ((in_channels, out_channels), attn) in enumerate(zip(channels_list_down, use_attn)):
+        #    self.contracting_path.append(DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout, downsample=False, width=res_block_width))
+        #    if i != len(channels_list_down) - 1:
+        #        self.contracting_path.append(Downsample(out_channels))
+
+        #self.bottleneck = Bottleneck(channels=channels_list_down[-1][-1], time_embedding_dim=time_embedding_dim, dropout=dropout) 
+        self.bottleneck = Bottleneck(channels=ch, time_embedding_dim=time_embedding_dim, dropout=dropout) 
 
         self.expansive_path = nn.ModuleList(
             [
@@ -472,10 +498,24 @@ class Unet(nn.Module):
                 # also because of bottleneck doubling the channels
                 #UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout, upsample=i != 0)
                 #for i, ((in_channels, out_channels), attn) in enumerate(zip(channels_list_up, reversed(use_attn)))
-                UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=False, dropout=dropout, upsample=i != 0 and i % 2 == 1 and i != len(channels_list_up) - 1)
-                for i, (in_channels, out_channels) in enumerate(channels_list_up)
+
+                # UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=False, dropout=dropout, upsample=i != 0 and i % 2 == 1 and i != len(channels_list_up) - 1)
+                # for i, (in_channels, out_channels) in enumerate(channels_list_up)
             ]
         )
+        for i, mult in enumerate(reversed(channel_mults)):
+            self.expansive_path.append(UpBlock(
+                in_channels=ch + input_chs.pop(),
+                out_channels=mult * C,
+                time_embedding_dim=time_embedding_dim,
+                use_attn=dimensions in attn_res,
+                dropout=dropout,
+                upsample=i != 0 and i % 2 == 1 and i != len(channels_list_up) - 1,
+                width=res_block_width,
+            ))
+            ch = mult * C
+            if i != 0 and i % 2 == 1 and i != len(channels_list_up) - 1:
+                dimensions //= 2
 
         self.head = nn.Sequential(
             nn.GroupNorm(32, starting_channels),
