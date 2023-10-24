@@ -183,29 +183,6 @@ class QKVAttention(nn.Module):
         weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
         return th.einsum("bts,bcs->bct", weight, v)
 
-    @staticmethod
-    def count_flops(model, _x, y):
-        """
-        A counter for the `thop` package to count the operations in an
-        attention operation.
-
-        Meant to be used like:
-
-            macs, params = thop.profile(
-                model,
-                inputs=(inputs, timestamps),
-                custom_ops={QKVAttention: QKVAttention.count_flops},
-            )
-
-        """
-        b, c, *spatial = y[0].shape
-        num_spatial = int(np.prod(spatial))
-        # We perform two matmuls with the same number of ops.
-        # The first computes the weight matrix, the second computes
-        # the combination of the value vectors.
-        matmul_ops = 2 * b * (num_spatial ** 2) * c
-        model.total_ops += th.DoubleTensor([matmul_ops])
-
 class SelfAttentionBlockOld(nn.Module):
     def __init__(self, channels: int):
         super().__init__()
@@ -252,32 +229,52 @@ class DownBlock(nn.Module):
     for downsampling. At each downsampling step we double the number of feature channels.'
     """
 
-    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0, downsample=True):
+    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0, downsample=True, width=1):
         """in_channels will typically be half of out_channels"""
         super().__init__()
+        self.width = width
         self.use_attn = use_attn
         self.do_downsample = downsample
 
-        self.resblock = ResBlock(
-            channels=in_channels,
-            out_channels=out_channels,
-            emb_dim=time_embedding_dim,
-            dropout=dropout,
-        )
+        self.blocks = nn.ModuleList()
+        for _ in range(width):
+            self.blocks.append(ResBlock(
+                channels=in_channels,
+                out_channels=out_channels,
+                emb_dim=time_embedding_dim,
+                dropout=dropout,
+            ))
+            if self.use_attn:
+                self.blocks.append(SelfAttentionBlock(
+                    channels=out_channels,
+                ))
+            in_channels = out_channels
 
-        if self.use_attn:
-            self.attn = SelfAttentionBlock(
-                channels=out_channels,
-            )
+        #self.resblock = ResBlock(
+        #    channels=in_channels,
+        #    out_channels=out_channels,
+        #    emb_dim=time_embedding_dim,
+        #    dropout=dropout,
+        #)
+
+        #if self.use_attn:
+        #    self.attn = SelfAttentionBlock(
+        #        channels=out_channels,
+        #    )
 
         if self.do_downsample:
             self.downsample = Downsample(out_channels) 
 
     def forward(self, x, t):
-        x = self.resblock(x, t)
+        #x = self.resblock(x, t)
 
-        if self.use_attn:
-            x = self.attn(x)
+        #if self.use_attn:
+        #    x = self.attn(x)
+        for block in self.blocks:
+            if isinstance(block, ResBlock):
+                x = block(x, t)
+            elif isinstance(block, SelfAttentionBlock):
+                x = block(x)
 
         if self.do_downsample:
             x = self.downsample(x)
@@ -309,33 +306,52 @@ class UpBlock(nn.Module):
     each followed by a ReLU.
     """
 
-    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0, upsample=True):
+    def __init__(self, in_channels, out_channels, time_embedding_dim, use_attn=False, dropout=0, upsample=True, width=1):
         """in_channels will typically be double of out_channels
         """
         super().__init__()
         self.use_attn = use_attn
         self.do_upsample = upsample
 
-        self.resblock = ResBlock(
-            channels=in_channels,
-            out_channels=out_channels,
-            emb_dim=time_embedding_dim,
-            dropout=dropout,
-        )
+        self.blocks = nn.ModuleList()
+        for _ in range(width):
+            self.blocks.append(ResBlock(
+                channels=in_channels,
+                out_channels=out_channels,
+                emb_dim=time_embedding_dim,
+                dropout=dropout,
+            ))
+            if self.use_attn:
+                self.blocks.append(SelfAttentionBlock(
+                    channels=out_channels,
+                ))
+            in_channels = out_channels
 
-        if self.use_attn:
-            self.attn = SelfAttentionBlock(
-                channels=out_channels,
-            )
+        #self.resblock = ResBlock(
+        #    channels=in_channels,
+        #    out_channels=out_channels,
+        #    emb_dim=time_embedding_dim,
+        #    dropout=dropout,
+        #)
+
+        #if self.use_attn:
+        #    self.attn = SelfAttentionBlock(
+        #        channels=out_channels,
+        #    )
         
         if self.do_upsample:
             self.upsample = Upsample(out_channels)
 
     def forward(self, x, t, residual=None):
-        x = self.resblock(x, t)
+        #x = self.resblock(x, t)
 
-        if self.use_attn:
-            x = self.attn(x)
+        #if self.use_attn:
+        #    x = self.attn(x)
+        for block in self.blocks:
+            if isinstance(block, ResBlock):
+                x = block(x, t)
+            elif isinstance(block, SelfAttentionBlock):
+                x = block(x)
 
         if self.do_upsample:
             x = self.upsample(x)
@@ -376,7 +392,9 @@ class Unet(nn.Module):
         dropout=0,
     ):
         super().__init__()
-        starting_channels = 64
+        res_block_width = 3
+        starting_channels = 128
+        time_embedding_dim = 4 * starting_channels
         C = starting_channels
 
         self.image_channels = image_channels
@@ -442,7 +460,7 @@ class Unet(nn.Module):
             ]
         )
         for i, ((in_channels, out_channels), attn) in enumerate(zip(channels_list_down, use_attn)):
-            self.contracting_path.append(DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout, downsample=False))
+            self.contracting_path.append(DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout, downsample=False, width=res_block_width))
             if i != len(channels_list_down) - 1:
                 self.contracting_path.append(Downsample(out_channels))
 
