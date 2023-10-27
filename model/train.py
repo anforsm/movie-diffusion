@@ -66,29 +66,29 @@ def train():
     drop_last=True,
   )
 
-  #model = Unet(
-  #  image_channels=3,
-  #  dropout=DROPOUT,
-  #)
+  model = Unet(
+    image_channels=3,
+    dropout=DROPOUT,
+  )
 
   
   # use height of image if not square
-  model = OpenAIUNet(
-    in_channels=3,
-    out_channels=3,
-    model_channels=128,
-    num_res_blocks=3,
-    #num_res_blocks=1,
-    attention_resolutions=(IMAGE_HEIGHT//16,IMAGE_HEIGHT//8),
-    #attention_resolutions=(),
-    dropout=0.1,
-    channel_mult=IMAGE_DIM_TO_CHANNEL_MULT[IMAGE_HEIGHT],
-    num_classes=None,
-    use_checkpoint=False,
-    num_heads=4,
-    num_heads_upsample=-1,
-    use_scale_shift_norm=True,
-  )
+  # model = OpenAIUNet(
+  #   in_channels=3,
+  #   out_channels=3,
+  #   model_channels=128,
+  #   num_res_blocks=3,
+  #   #num_res_blocks=1,
+  #   attention_resolutions=(IMAGE_HEIGHT//16,IMAGE_HEIGHT//8),
+  #   #attention_resolutions=(),
+  #   dropout=0.1,
+  #   channel_mult=IMAGE_DIM_TO_CHANNEL_MULT[IMAGE_HEIGHT],
+  #   num_classes=None,
+  #   use_checkpoint=False,
+  #   num_heads=4,
+  #   num_heads_upsample=-1,
+  #   use_scale_shift_norm=True,
+  # )
   print(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters")
 
   diffusion = GaussianDiffusion(

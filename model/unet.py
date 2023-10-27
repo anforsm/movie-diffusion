@@ -148,13 +148,13 @@ class SelfAttentionBlock(nn.Module):
 
         self.norm = nn.GroupNorm(32, channels)
         # not sure why openai is using conv1d instead of linear layer
-        #self.qkv = nn.Conv1d(channels, channels * 3, 1)
-        self.qkv = nn.Linear(channels, 3 * channels)
+        self.qkv = nn.Conv1d(channels, channels * 3, 1)
+        #self.qkv = nn.Linear(channels, 3 * channels)
         self.attention = QKVAttention()
         self.proj_out = zero_module(
             # again, not sure why openai is using kernel 1 conv1d
-            #nn.Conv1d(channels, channels, 1)
-            nn.Linear(channels, channels),
+            nn.Conv1d(channels, channels, 1)
+            #nn.Linear(channels, channels),
         )
 
     def forward(self, x):
@@ -411,7 +411,7 @@ class Unet(nn.Module):
         dropout=0,
     ):
         super().__init__()
-        res_block_width = 3
+        res_block_width = 1
         starting_channels = 128
         time_embedding_dim = 4 * starting_channels
         C = starting_channels
@@ -424,58 +424,17 @@ class Unet(nn.Module):
 
         #channel_mults = (1, 2, 4, 8)
         channel_mults = (1, 2, 2, 2)
-
-        channels_list_down = [
-            (C                      , channel_mults[0] * C),
-            (channel_mults[0] * C   , channel_mults[1] * C),
-            (channel_mults[1] * C   , channel_mults[2] * C),
-            (channel_mults[2] * C   , channel_mults[3] * C),
-        ]
+        #channel_mults = (1, 2)
 
         # Wide U-Net, i.e. num channels are increased as we celntract
-        #channels_list_down = [
-        #    # (image_channels, starting_channels),
-        #    (C, C),
-        #    (C, 2*C),
-        #    (2*C, 4*C),
-        #    (4*C, 8*C),
-        #    #(8*C, 16*C),
-        #]
-
-        channels_list_up = [
-            (2 * channel_mults[3] * C                        , channel_mults[3] * C),
-
-            (2 * channel_mults[2] * C + channel_mults[2] * C , channel_mults[3] * C),
-            (2 * channel_mults[2] * C + channel_mults[2] * C , channel_mults[2] * C),
-
-            (2 * channel_mults[1] * C + channel_mults[1] * C , channel_mults[2] * C),
-            (2 * channel_mults[1] * C + channel_mults[1] * C , channel_mults[1] * C),
-
-            (2 * channel_mults[0] * C + channel_mults[0] * C , channel_mults[1] * C),
-            (2 * channel_mults[0] * C + channel_mults[0] * C , channel_mults[0] * C),
-
-            (2 * channel_mults[0] * C                        , channel_mults[0] * C),
-        ]
-
-        #channels_list_up = [
-        #    #(16*C, 8*C),
-        #    (2*8*C, 2*4*C),
-        #    (2*4*C + 2*2*C, 2*2*C),
-        #    (2*2*C + 2*C, 2*C),
-        #    (2*C + C, C),
-        #]
 
         use_attn = [
             False,
             False, 
-            False,
-            False, 
-            #True,
-            #True,
-        ]
-        attn_res = [
-            16,
-            8,
+            #False,
+            #False, 
+            True,
+            True,
         ]
 
         self.contracting_path = nn.ModuleList(
@@ -489,11 +448,11 @@ class Unet(nn.Module):
         for i, mult in enumerate(channel_mults):
             self.contracting_path.append(DownBlock(
                 in_channels=ch,
-                out_channels=mult * ch,
+                out_channels=mult * C,
                 time_embedding_dim=time_embedding_dim,
-                use_attn=dimensions in attn_res,
+                use_attn=use_attn[i],
                 dropout=dropout,
-                downsample=i != len(channel_mults) - 1,
+                downsample=False,
                 width=res_block_width,
             ))
             ch = mult * C
@@ -527,13 +486,14 @@ class Unet(nn.Module):
                 in_channels=ch + input_chs.pop(),
                 out_channels=mult * C,
                 time_embedding_dim=time_embedding_dim,
-                use_attn=dimensions in attn_res,
+                use_attn=list(reversed(use_attn))[i],
                 dropout=dropout,
-                upsample=i != 0 and i % 2 == 1 and i != len(channels_list_up) - 1,
+                #upsample=i != 0 and i != len(channel_mults) - 1,# and i % 2 == 1,# and i != len(channel_mults) - 1,
+                upsample=i != 0,
                 width=res_block_width,
             ))
             ch = mult * C
-            if i != 0 and i % 2 == 1 and i != len(channels_list_up) - 1:
+            if i != 0 and i % 2 == 1:# and i != len(channels_list_up) - 1:
                 dimensions //= 2
 
         self.head = nn.Sequential(
@@ -568,13 +528,17 @@ class Unet(nn.Module):
                 x = contracting_block(x)
             else:
                 x = contracting_block(x, t)
+                print(x.shape)
             residuals.append(x)
 
         x = self.bottleneck(x, t)
+        print("going up")
 
         for expansive_block, residual in zip(
             self.expansive_path, reversed(residuals)
         ):
+            print("x", x.shape)
+            print("res", residual.shape)
             x = torch.cat([x, residual], dim=1)
             x = expansive_block(x, t)
 
