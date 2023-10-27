@@ -121,8 +121,6 @@ class GaussianDiffusion:
     z = torch.randn_like(x) if t >= 1 else torch.zeros_like(x)
     z = z.to(device)
     alpha = self.alphas[t]
-    print(alpha.shape)
-    print(x.shape)
     one_over_sqrt_alpha = 1.0 / torch.sqrt(alpha)
     one_minus_alpha = 1.0 - alpha
 
