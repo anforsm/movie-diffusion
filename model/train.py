@@ -19,6 +19,12 @@ from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TR
 if LOG_WANDB:
   import wandb
 
+IMAGE_DIM_TO_CHANNEL_MULT = {
+  32: (1,2,2,2),
+  64: (1,2,2,2),
+  128: (1,2,4,8),
+}
+
 image_transform = transforms.Compose([
   transforms.ToTensor(),
   transforms.Lambda(lambda x: x * 2 - 1),
@@ -64,19 +70,24 @@ def train():
   #  image_channels=3,
   #  dropout=DROPOUT,
   #)
+
+  
+  # use height of image if not square
   model = OpenAIUNet(
     in_channels=3,
     out_channels=3,
     model_channels=128,
-    num_res_blocks=3,
-    attention_resolutions=[8,16],
+    #num_res_blocks=3,
+    num_res_blocks=1,
+    #attention_resolutions=(IMAGE_HEIGHT//16,IMAGE_HEIGHT//8),
+    attention_resolutions=(),
     dropout=0.1,
-    channel_mult=(1,2,2,2),
+    channel_mult=IMAGE_DIM_TO_CHANNEL_MULT[IMAGE_HEIGHT],
     num_classes=None,
     use_checkpoint=False,
     num_heads=4,
     num_heads_upsample=-1,
-    use_scale_shift_norm=True
+    use_scale_shift_norm=True,
   )
   print(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters")
 

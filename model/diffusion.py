@@ -94,7 +94,8 @@ class GaussianDiffusion:
     
     try:
       #print(x.shape)
-      noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
+      #noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
+      noisy_image = torch.einsum("b,bcwh->bcwh", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bcwh->bcwh", sqrt_one_minus_alpha_hat, epsilon)
     except:
       print(f'Failed image: shape {x.shape}')
       
@@ -102,7 +103,8 @@ class GaussianDiffusion:
     #print(f'Noisy image -> {noisy_image.shape}')
     # returning noisy iamge and the noise which was added to the image
     #return noisy_image, epsilon
-    return torch.clip(noisy_image, -1.0, 1.0), epsilon
+    #return torch.clip(noisy_image, -1.0, 1.0), epsilon
+    return noisy_image, epsilon
   
   @staticmethod
   def normalize_image(x):
@@ -119,16 +121,28 @@ class GaussianDiffusion:
     z = torch.randn_like(x) if t >= 1 else torch.zeros_like(x)
     z = z.to(device)
     alpha = self.alphas[t]
+    print(alpha.shape)
+    print(x.shape)
     one_over_sqrt_alpha = 1.0 / torch.sqrt(alpha)
     one_minus_alpha = 1.0 - alpha
 
     sqrt_one_minus_alpha_hat = torch.sqrt(1.0 - self.alpha_hat[t])
     beta_hat = (1 - self.alpha_hat[t-1]) / (1 - self.alpha_hat[t]) * self.betas[t]
     beta = self.betas[t]
+    print(beta.shape)
+    print(type(beta))
+    print(beta)
+    exit()
+    # should we reshape the params to (batch_size, 1, 1, 1) ?
+    
+
     # we can either use beta_hat or beta_t
     # std = torch.sqrt(beta_hat)
     std = torch.sqrt(beta)
-    x_t_minus_1 = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * self.model(x, torch.tensor([t]).to(device))) + std * z
+    # mean + variance * z
+    predicted_noise = self.model(x, torch.tensor([t]).to(device))
+    mean = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * predicted_noise)
+    x_t_minus_1 = mean + std * z
 
     return x_t_minus_1
   

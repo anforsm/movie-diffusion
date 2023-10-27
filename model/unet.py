@@ -147,18 +147,37 @@ class SelfAttentionBlock(nn.Module):
         self.use_checkpoint = use_checkpoint
 
         self.norm = nn.GroupNorm(32, channels)
-        self.qkv = nn.Conv1d(channels, channels * 3, 1)
+        # not sure why openai is using conv1d instead of linear layer
+        #self.qkv = nn.Conv1d(channels, channels * 3, 1)
+        self.qkv = nn.Linear(channels, 3 * channels)
         self.attention = QKVAttention()
-        self.proj_out = zero_module(nn.Conv1d(channels, channels, 1))
+        self.proj_out = zero_module(
+            # again, not sure why openai is using kernel 1 conv1d
+            #nn.Conv1d(channels, channels, 1)
+            nn.Linear(channels, channels),
+        )
 
     def forward(self, x):
         b, c, *spatial = x.shape
+        # batch size, channel dim, width, height
         x = x.reshape(b, c, -1)
+        # we want to convert 2d image to 1d sequence
+        # x: batch size, channel dim, width * height
         qkv = self.qkv(self.norm(x))
+        # get Q, K, V matrices
+
+        # qkv: batch size, channel dim * 3, width * height ?
         qkv = qkv.reshape(b * self.num_heads, -1, qkv.shape[2])
+        # qkv: batch size * num heads, channel dim * 3, width * height ?
+
+        # simple attn operation: attn = softmax(qk^T / sqrt(d)) v
         h = self.attention(qkv)
+
+        # h: batch size * num heads, width * height, channel dim ?
         h = h.reshape(b, -1, h.shape[-1])
+        # h: batch size, width * height, channel dim * num heads ?
         h = self.proj_out(h)
+        # uses an additory residual connection
         return (x + h).reshape(b, c, *spatial)
 
 
