@@ -129,10 +129,6 @@ class GaussianDiffusion:
     sqrt_one_minus_alpha_hat = torch.sqrt(1.0 - self.alpha_hat[t])
     beta_hat = (1 - self.alpha_hat[t-1]) / (1 - self.alpha_hat[t]) * self.betas[t]
     beta = self.betas[t]
-    print(beta.shape)
-    print(type(beta))
-    print(beta)
-    exit()
     # should we reshape the params to (batch_size, 1, 1, 1) ?
     
 
