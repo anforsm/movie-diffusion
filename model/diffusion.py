@@ -117,6 +117,7 @@ class GaussianDiffusion:
     return (x + 1.0) / 2.0 * 255.0
   
   def sample_step(self, x, t):
+    batch_size = x.shape[0]
     device = x.device
     z = torch.randn_like(x) if t >= 1 else torch.zeros_like(x)
     z = z.to(device)
@@ -147,7 +148,7 @@ class GaussianDiffusion:
     self.model.eval()
     image_versions = []
     with torch.no_grad():
-      x = torch.randn(1, self.channels, *self.image_size).to(self.device)
+      x = torch.randn(num_samples, self.channels, *self.image_size).to(self.device)
       it = reversed(range(1, self.noise_steps))
       if show_progress:
         it = tqdm(it)
