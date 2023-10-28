@@ -172,6 +172,8 @@ def train():
           wandb.log({
             "example_image": wandb.Image(collage),
           }, step=step_i)
+
+        torch.save(model.state_dict(), "./out/model_ckpt.pt")
         
       if step_i % val_every_n_steps == 0:
         val_loss = diffusion.validate(val_dataloader)
