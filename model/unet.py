@@ -427,7 +427,7 @@ class Unet(nn.Module):
         #self.input = ConvBlock(3, C)
 
         #channel_mults = (1, 2, 4, 8)
-        channel_mults = (1, 2, 2, 2)
+        channel_mults = (1, 2, 4, 8)
         #channel_mults = (1, 2)
 
         # Wide U-Net, i.e. num channels are increased as we celntract
@@ -437,6 +437,7 @@ class Unet(nn.Module):
             False, 
             #False,
             #False, 
+            #True,
             True,
             True,
         ]
