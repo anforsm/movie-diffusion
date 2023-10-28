@@ -255,6 +255,8 @@ class DownBlock(nn.Module):
         self.use_attn = use_attn
         self.do_downsample = downsample
 
+        #print(f"DownBlock: {in_channels} -> {out_channels}")
+
         self.blocks = nn.ModuleList()
         for _ in range(width):
             self.blocks.append(ResBlock(
@@ -331,6 +333,8 @@ class UpBlock(nn.Module):
         super().__init__()
         self.use_attn = use_attn
         self.do_upsample = upsample
+
+        #print(f"UpBlock: {in_channels} -> {out_channels}")
 
         self.blocks = nn.ModuleList()
         for _ in range(width):
@@ -411,7 +415,7 @@ class Unet(nn.Module):
         dropout=0,
     ):
         super().__init__()
-        res_block_width = 1
+        res_block_width = 3
         starting_channels = 128
         time_embedding_dim = 4 * starting_channels
         C = starting_channels
@@ -459,7 +463,6 @@ class Unet(nn.Module):
             input_chs.append(ch)
             if i != len(channel_mults) - 1:
                 self.contracting_path.append(Downsample(ch))
-                input_chs.append(ch)
                 dimensions *= 2
 
         #for i, ((in_channels, out_channels), attn) in enumerate(zip(channels_list_down, use_attn)):
@@ -469,6 +472,7 @@ class Unet(nn.Module):
 
         #self.bottleneck = Bottleneck(channels=channels_list_down[-1][-1], time_embedding_dim=time_embedding_dim, dropout=dropout) 
         self.bottleneck = Bottleneck(channels=ch, time_embedding_dim=time_embedding_dim, dropout=dropout) 
+        #print("input chs", input_chs)
 
         self.expansive_path = nn.ModuleList(
             [
@@ -489,12 +493,11 @@ class Unet(nn.Module):
                 use_attn=list(reversed(use_attn))[i],
                 dropout=dropout,
                 #upsample=i != 0 and i != len(channel_mults) - 1,# and i % 2 == 1,# and i != len(channel_mults) - 1,
-                upsample=i != 0,
+                #upsample=i != 0,
+                upsample=i != len(channel_mults) - 1,
                 width=res_block_width,
             ))
             ch = mult * C
-            if i != 0 and i % 2 == 1:# and i != len(channels_list_up) - 1:
-                dimensions //= 2
 
         self.head = nn.Sequential(
             nn.GroupNorm(32, starting_channels),
@@ -528,22 +531,29 @@ class Unet(nn.Module):
                 x = contracting_block(x)
             else:
                 x = contracting_block(x, t)
-                print(x.shape)
-            residuals.append(x)
+                #print(x.shape)
+                residuals.append(x)
 
         x = self.bottleneck(x, t)
-        print("going up")
+        #print("going up")
+        #print([r.shape for r in residuals])
 
-        for expansive_block, residual in zip(
-            self.expansive_path, reversed(residuals)
-        ):
-            print("x", x.shape)
-            print("res", residual.shape)
-            x = torch.cat([x, residual], dim=1)
-            x = expansive_block(x, t)
+        #for expansive_block, residual in zip(
+        #    self.expansive_path, reversed(residuals)
+        #):
+        for expansive_block in self.expansive_path:
+            if isinstance(expansive_block, UpBlock):
+                residual = residuals.pop()
+                #print(f"residual shape: {residual.shape}")
+                #print(f"expansive_block shape: {x.shape}")
+                x = torch.cat([x, residual], dim=1)
+                x = expansive_block(x, t)
+            else:
+                x = expansive_block(x, t)
 
         x = self.head(x)
         # x: (1, 3, 120, 80)
         #x = torch.einsum("bchw->bhwc", x)
         # x: (1, 120, 80, 3)
+        #print("last", x.shape)
         return x
