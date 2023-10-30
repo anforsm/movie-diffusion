@@ -207,7 +207,7 @@ class SelfAttentionBlockOld(nn.Module):
         super().__init__()
         self.transformer = nn.TransformerEncoderLayer(
             d_model=channels,
-            nhead=4,
+            nhead=1,
             dropout=0,
             activation="relu",
             batch_first=True,
@@ -415,7 +415,7 @@ class Unet(nn.Module):
         dropout=0,
     ):
         super().__init__()
-        res_block_width = 3
+        res_block_width = 2
         starting_channels = 128
         time_embedding_dim = 4 * starting_channels
         C = starting_channels
@@ -427,19 +427,21 @@ class Unet(nn.Module):
         #self.input = ConvBlock(3, C)
 
         #channel_mults = (1, 2, 4, 8)
-        channel_mults = (1, 2, 4, 8)
+        #channel_mults = (1, 2, 4, 8)
         #channel_mults = (1, 2)
+        channel_mults = (1, 2, 2, 4, 4)
 
         # Wide U-Net, i.e. num channels are increased as we celntract
 
         use_attn = [
             False,
             False, 
-            #False,
+            False,
             #False, 
             #True,
+            #True,
             True,
-            True,
+            False,
         ]
 
         self.contracting_path = nn.ModuleList(
