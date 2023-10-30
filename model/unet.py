@@ -140,7 +140,7 @@ class SelfAttentionBlock(nn.Module):
     https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
     """
 
-    def __init__(self, channels, num_heads=4, use_checkpoint=False):
+    def __init__(self, channels, num_heads=1, use_checkpoint=False):
         super().__init__()
         self.channels = channels
         self.num_heads = num_heads

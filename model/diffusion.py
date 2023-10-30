@@ -135,7 +135,7 @@ class GaussianDiffusion:
     # std = torch.sqrt(beta_hat)
     std = torch.sqrt(beta)
     # mean + variance * z
-    predicted_noise = self.model(x, torch.tensor([t]).to(device))
+    predicted_noise = self.model(x, torch.tensor([t]).repeat(batch_size).to(device))
     mean = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * predicted_noise)
     x_t_minus_1 = mean + std * z
 
