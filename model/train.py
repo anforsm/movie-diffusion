@@ -157,18 +157,18 @@ def train():
         acc_loss = 0
       
       if step_i % image_every_n_steps == 0:
-        images, _ = diffusion.sample(16, show_progress=False)
-        images = [imageAPI.tensor_to_image(image.squeeze(0).permute(1,2,0)) for image in images]
-        # convert images to single image with 4x4 grid with some padding
-        collage = Image.new('RGB', (IMAGE_WIDTH*4+16, IMAGE_HEIGHT*4+16), (255, 255, 255))
-        #collage = Image.new('RGB', (IMAGE_WIDTH*2+16, IMAGE_HEIGHT), (0, 0, 0))
-        for i in range(4):
-          #j = 0
-          for j in range(4):
-            collage.paste(images[i*4+j], (i*IMAGE_WIDTH+8, j*IMAGE_HEIGHT+8))
-          #collage.paste(images[i], (i*IMAGE_WIDTH+8, j*IMAGE_HEIGHT+8))
-        
         if LOG_WANDB:
+          images, _ = diffusion.sample(4, show_progress=False)
+          images = [imageAPI.tensor_to_image(image.squeeze(0).permute(1,2,0)) for image in images]
+          # convert images to single image with 4x4 grid with some padding
+          collage = Image.new('RGB', (IMAGE_WIDTH*4+16, IMAGE_HEIGHT*4+16), (255, 255, 255))
+          #collage = Image.new('RGB', (IMAGE_WIDTH*2+16, IMAGE_HEIGHT), (0, 0, 0))
+          for i in range(2):
+            #j = 0
+            for j in range(2):
+              collage.paste(images[i*4+j], (i*IMAGE_WIDTH+8, j*IMAGE_HEIGHT+8))
+            #collage.paste(images[i], (i*IMAGE_WIDTH+8, j*IMAGE_HEIGHT+8))
+        
           wandb.log({
             "example_image": wandb.Image(collage),
           }, step=step_i)
