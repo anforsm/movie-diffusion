@@ -40,7 +40,8 @@ reverse_transform = transforms.Compose([
 def collate_fn(batch):
   processed_images = []
   for image in batch:
-      img = image_transform(image[HF_IMAGE_KEY])
+      #img = image_transform(image[HF_IMAGE_KEY])
+      img = torch.tensor(image[HF_IMAGE_KEY])
       if img.shape[0] == 1:  # Check if the image is grayscale
           img = img.repeat(3, 1, 1)  # Convert to RGB by repeating the single channel
       processed_images.append(img)
