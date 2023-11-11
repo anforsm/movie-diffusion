@@ -153,7 +153,7 @@ class GaussianDiffusion:
     if self.model.is_conditional:
       # cond is arange()
       assert num_samples <= self.model.num_classes, "num_samples must be less than or equal to the number of classes"
-      cond = torch.arange(self.model.num_classes)[:num_samples]
+      cond = torch.arange(self.model.num_classes)[:num_samples].to(self.device)
       cond = rearrange(cond, 'i -> i ()')
 
     self.model.eval()

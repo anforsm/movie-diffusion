@@ -136,6 +136,7 @@ def train():
       noise_added_to_image = noise_added_to_image.to(device)
       noisy_image = noisy_image.to(device)
       t = t.to(device)
+      cond = cond.to(device)
 
       predicted_noise_added_to_image = model(noisy_image, t, cond)
 
