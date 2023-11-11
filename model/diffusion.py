@@ -182,6 +182,7 @@ class GaussianDiffusion:
         noisy_image, added_noise = self.apply_noise(image, t)
         noisy_image = noisy_image.to(self.device)
         added_noise = added_noise.to(self.device)
+        cond = cond.to(self.device)
         predicted_noise = self.model(noisy_image, t, cond)
         loss = nn.MSELoss()(predicted_noise, added_noise)
         acc_loss += loss.item()
