@@ -10,7 +10,7 @@ import numpy as np
 from datasets import load_dataset
 from PIL import Image
 
-from unet import Unet
+from unet import Unet, ConditionalUnet
 from openai_unet import OpenAIUNet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
@@ -39,14 +39,17 @@ reverse_transform = transforms.Compose([
 
 def collate_fn(batch):
   processed_images = []
+  labels = []
   for image in batch:
-      #img = image_transform(image[HF_IMAGE_KEY])
-      img = torch.tensor(image[HF_IMAGE_KEY])
+      img = image_transform(image[HF_IMAGE_KEY])
+      #img = torch.tensor(image[HF_IMAGE_KEY])
+      cond = torch.tensor([image["label"]], dtype=torch.int64)
       if img.shape[0] == 1:  # Check if the image is grayscale
           img = img.repeat(3, 1, 1)  # Convert to RGB by repeating the single channel
       processed_images.append(img)
+      labels.append(cond)
   
-  return torch.stack(processed_images)
+  return torch.stack(processed_images), torch.stack(labels)
   #return torch.stack([image_transform(image[HF_IMAGE_KEY]) for image in batch])
 
 def train():
@@ -72,6 +75,7 @@ def train():
     image_channels=3,
     dropout=DROPOUT,
   )
+  model = ConditionalUnet(model, num_classes=10)
 
   
   # use height of image if not square
@@ -121,7 +125,7 @@ def train():
   step_i = 0
   acc_loss = 0
   for epoch in range(epochs):
-    for image in dataloader:
+    for (image, cond) in dataloader:
       step_i += 1 
       # (batch_size, image_width, image_height, channels)
       #image = diffusion.normalize_image(image)
@@ -133,7 +137,7 @@ def train():
       noisy_image = noisy_image.to(device)
       t = t.to(device)
 
-      predicted_noise_added_to_image = model(noisy_image, t)
+      predicted_noise_added_to_image = model(noisy_image, t, cond)
 
       # we are trying to predict the noise added to images
       # thus our loss is only on the actual noise itself

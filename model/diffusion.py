@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
 from PIL import Image
+from einops import rearrange
 import math 
 class GaussianDiffusion:
   def __init__(self, model, noise_steps, beta_0, beta_T, image_size, channels=3, schedule="linear"):
@@ -116,7 +117,7 @@ class GaussianDiffusion:
     # denormalize image to [0, 255]
     return (x + 1.0) / 2.0 * 255.0
   
-  def sample_step(self, x, t):
+  def sample_step(self, x, t, cond):
     batch_size = x.shape[0]
     device = x.device
     z = torch.randn_like(x) if t >= 1 else torch.zeros_like(x)
@@ -135,7 +136,10 @@ class GaussianDiffusion:
     # std = torch.sqrt(beta_hat)
     std = torch.sqrt(beta)
     # mean + variance * z
-    predicted_noise = self.model(x, torch.tensor([t]).repeat(batch_size).to(device))
+    if cond is not None:
+      predicted_noise = self.model(x, torch.tensor([t]).repeat(batch_size).to(device), cond)
+    else:
+      predicted_noise = self.model(x, torch.tensor([t]).repeat(batch_size).to(device))
     mean = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * predicted_noise)
     x_t_minus_1 = mean + std * z
 
@@ -145,6 +149,13 @@ class GaussianDiffusion:
     """
     Sample from the model
     """
+    cond = None
+    if self.model.is_conditional:
+      # cond is arange()
+      assert num_samples <= self.model.num_classes, "num_samples must be less than or equal to the number of classes"
+      cond = torch.arange(self.model.num_classes)[:num_samples]
+      cond = rearrange(cond, 'i -> i ()')
+
     self.model.eval()
     image_versions = []
     with torch.no_grad():
@@ -154,7 +165,7 @@ class GaussianDiffusion:
         it = tqdm(it)
       for t in it:
         image_versions.append(self.denormalize_image(torch.clip(x, -1, 1)).clone().squeeze(0))
-        x = self.sample_step(x, t)
+        x = self.sample_step(x, t, cond)
     self.model.train()
     x = torch.clip(x, -1.0, 1.0)
     return self.denormalize_image(x), image_versions

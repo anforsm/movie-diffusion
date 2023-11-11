@@ -415,8 +415,11 @@ class Unet(nn.Module):
         dropout=0,
     ):
         super().__init__()
+        self.is_conditional = False
+
         res_block_width = 2
         starting_channels = 128
+        self.starting_channels = starting_channels
         time_embedding_dim = 4 * starting_channels
         C = starting_channels
 
@@ -514,11 +517,14 @@ class Unet(nn.Module):
         )
 
     def forward(self, x, t):
+        t = self.time_encoding(t)
+        return self._forward(x, t)
+
+    def _forward(self, x, t):
         # If using torchvision totensor, we do not need to swap axes
         # x: (batch_size, height, width, channels)
         #x = torch.einsum("bhwc->bchw", x)
         # x: (batch_size, channels, height, width)
-        t = self.time_encoding(t)
         t = self.time_embedding(t)
 
         #x = self.input(x)
@@ -560,3 +566,25 @@ class Unet(nn.Module):
         # x: (1, 120, 80, 3)
         #print("last", x.shape)
         return x
+
+class ConditionalUnet(nn.Module):
+    def __init__(self, unet, num_classes):
+        super().__init__()
+        self.is_conditional = True
+
+        self.unet = unet
+        self.num_classes = num_classes
+
+        self.class_embedding = nn.Embedding(num_classes, unet.starting_channels)
+    
+    def forward(self, x, t, cond=None):
+        # cond: (batch_size, n), where n is the number of classes that we are conditioning on
+        t = self.unet.time_encoding(t)
+
+        if cond is not None:
+            cond = self.class_embedding(cond)
+            # sum across the classes so we get a single vector representing the set of classes
+            cond = cond.sum(dim=1)
+            t += cond
+
+        return self.unet._forward(x, t)
