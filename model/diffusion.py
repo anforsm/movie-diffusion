@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
 from PIL import Image
+from einops import rearrange
 import math 
 class GaussianDiffusion:
   def __init__(self, model, noise_steps, beta_0, beta_T, image_size, channels=3, schedule="linear"):
@@ -94,7 +95,8 @@ class GaussianDiffusion:
     
     try:
       #print(x.shape)
-      noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
+      #noisy_image = torch.einsum("b,bwhc->bwhc", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bwhc->bwhc", sqrt_one_minus_alpha_hat, epsilon)
+      noisy_image = torch.einsum("b,bcwh->bcwh", sqrt_alpha_hat, x.to(self.device)) + torch.einsum("b,bcwh->bcwh", sqrt_one_minus_alpha_hat, epsilon)
     except:
       print(f'Failed image: shape {x.shape}')
       
@@ -102,7 +104,8 @@ class GaussianDiffusion:
     #print(f'Noisy image -> {noisy_image.shape}')
     # returning noisy iamge and the noise which was added to the image
     #return noisy_image, epsilon
-    return torch.clip(noisy_image, -1.0, 1.0), epsilon
+    #return torch.clip(noisy_image, -1.0, 1.0), epsilon
+    return noisy_image, epsilon
   
   @staticmethod
   def normalize_image(x):
@@ -114,7 +117,8 @@ class GaussianDiffusion:
     # denormalize image to [0, 255]
     return (x + 1.0) / 2.0 * 255.0
   
-  def sample_step(self, x, t):
+  def sample_step(self, x, t, cond):
+    batch_size = x.shape[0]
     device = x.device
     z = torch.randn_like(x) if t >= 1 else torch.zeros_like(x)
     z = z.to(device)
@@ -125,10 +129,19 @@ class GaussianDiffusion:
     sqrt_one_minus_alpha_hat = torch.sqrt(1.0 - self.alpha_hat[t])
     beta_hat = (1 - self.alpha_hat[t-1]) / (1 - self.alpha_hat[t]) * self.betas[t]
     beta = self.betas[t]
+    # should we reshape the params to (batch_size, 1, 1, 1) ?
+    
+
     # we can either use beta_hat or beta_t
     # std = torch.sqrt(beta_hat)
     std = torch.sqrt(beta)
-    x_t_minus_1 = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * self.model(x, torch.tensor([t]).to(device))) + std * z
+    # mean + variance * z
+    if cond is not None:
+      predicted_noise = self.model(x, torch.tensor([t]).repeat(batch_size).to(device), cond)
+    else:
+      predicted_noise = self.model(x, torch.tensor([t]).repeat(batch_size).to(device))
+    mean = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * predicted_noise)
+    x_t_minus_1 = mean + std * z
 
     return x_t_minus_1
   
@@ -136,16 +149,23 @@ class GaussianDiffusion:
     """
     Sample from the model
     """
+    cond = None
+    if self.model.is_conditional:
+      # cond is arange()
+      assert num_samples <= self.model.num_classes, "num_samples must be less than or equal to the number of classes"
+      cond = torch.arange(self.model.num_classes)[:num_samples].to(self.device)
+      cond = rearrange(cond, 'i -> i ()')
+
     self.model.eval()
     image_versions = []
     with torch.no_grad():
-      x = torch.randn(1, self.channels, *self.image_size).to(self.device)
+      x = torch.randn(num_samples, self.channels, *self.image_size).to(self.device)
       it = reversed(range(1, self.noise_steps))
       if show_progress:
         it = tqdm(it)
       for t in it:
         image_versions.append(self.denormalize_image(torch.clip(x, -1, 1)).clone().squeeze(0))
-        x = self.sample_step(x, t)
+        x = self.sample_step(x, t, cond)
     self.model.train()
     x = torch.clip(x, -1.0, 1.0)
     return self.denormalize_image(x), image_versions
@@ -157,12 +177,13 @@ class GaussianDiffusion:
     self.model.eval()
     acc_loss = 0
     with torch.no_grad():
-      for batch in dataloader:
-        t = self.sample_time_steps(batch_size=batch.shape[0])
-        noisy_image, added_noise = self.apply_noise(batch, t)
+      for (image, cond) in dataloader:
+        t = self.sample_time_steps(batch_size=image.shape[0])
+        noisy_image, added_noise = self.apply_noise(image, t)
         noisy_image = noisy_image.to(self.device)
         added_noise = added_noise.to(self.device)
-        predicted_noise = self.model(noisy_image, t)
+        cond = cond.to(self.device)
+        predicted_noise = self.model(noisy_image, t, cond)
         loss = nn.MSELoss()(predicted_noise, added_noise)
         acc_loss += loss.item()
     self.model.train()

@@ -8,8 +8,10 @@ from torchvision import transforms
 from tqdm import tqdm
 import numpy as np
 from datasets import load_dataset
+from PIL import Image
 
-from unet import Unet
+from unet import Unet, ConditionalUnet
+from openai_unet import OpenAIUNet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
@@ -17,6 +19,12 @@ from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TR
 
 if LOG_WANDB:
   import wandb
+
+IMAGE_DIM_TO_CHANNEL_MULT = {
+  32: (1,2,2,2),
+  64: (1,2,2,2),
+  128: (1,2,4,8),
+}
 
 image_transform = transforms.Compose([
   transforms.ToTensor(),
@@ -31,13 +39,17 @@ reverse_transform = transforms.Compose([
 
 def collate_fn(batch):
   processed_images = []
+  labels = []
   for image in batch:
       img = image_transform(image[HF_IMAGE_KEY])
+      #img = torch.tensor(image[HF_IMAGE_KEY])
+      cond = torch.tensor([image["label"]], dtype=torch.int64)
       if img.shape[0] == 1:  # Check if the image is grayscale
           img = img.repeat(3, 1, 1)  # Convert to RGB by repeating the single channel
       processed_images.append(img)
+      labels.append(cond)
   
-  return torch.stack(processed_images)
+  return torch.stack(processed_images), torch.stack(labels)
   #return torch.stack([image_transform(image[HF_IMAGE_KEY]) for image in batch])
 
 def train():
@@ -63,6 +75,26 @@ def train():
     image_channels=3,
     dropout=DROPOUT,
   )
+  model = ConditionalUnet(model, num_classes=10)
+
+  
+  # use height of image if not square
+  # model = OpenAIUNet(
+  #   in_channels=3,
+  #   out_channels=3,
+  #   model_channels=128,
+  #   num_res_blocks=3,
+  #   #num_res_blocks=1,
+  #   attention_resolutions=(IMAGE_HEIGHT//16,IMAGE_HEIGHT//8),
+  #   #attention_resolutions=(),
+  #   dropout=0.1,
+  #   channel_mult=IMAGE_DIM_TO_CHANNEL_MULT[IMAGE_HEIGHT],
+  #   num_classes=None,
+  #   use_checkpoint=False,
+  #   num_heads=4,
+  #   num_heads_upsample=-1,
+  #   use_scale_shift_norm=True,
+  # )
   print(f"Model has {sum(p.numel() for p in model.parameters()):,} parameters")
 
   diffusion = GaussianDiffusion(
@@ -93,7 +125,7 @@ def train():
   step_i = 0
   acc_loss = 0
   for epoch in range(epochs):
-    for image in dataloader:
+    for (image, cond) in dataloader:
       step_i += 1 
       # (batch_size, image_width, image_height, channels)
       #image = diffusion.normalize_image(image)
@@ -104,8 +136,9 @@ def train():
       noise_added_to_image = noise_added_to_image.to(device)
       noisy_image = noisy_image.to(device)
       t = t.to(device)
+      cond = cond.to(device)
 
-      predicted_noise_added_to_image = model(noisy_image, t)
+      predicted_noise_added_to_image = model(noisy_image, t, cond)
 
       # we are trying to predict the noise added to images
       # thus our loss is only on the actual noise itself
@@ -130,11 +163,23 @@ def train():
         acc_loss = 0
       
       if step_i % image_every_n_steps == 0:
-        image, _ = diffusion.sample(1, show_progress=False)
         if LOG_WANDB:
+          images, _ = diffusion.sample(4, show_progress=False)
+          images = [imageAPI.tensor_to_image(image.squeeze(0).permute(1,2,0)) for image in images]
+          # convert images to single image with 4x4 grid with some padding
+          collage = Image.new('RGB', (IMAGE_WIDTH*2+16, IMAGE_HEIGHT*2+16), (255, 255, 255))
+          #collage = Image.new('RGB', (IMAGE_WIDTH*2+16, IMAGE_HEIGHT), (0, 0, 0))
+          for i in range(2):
+            #j = 0
+            for j in range(2):
+              collage.paste(images[i*2+j], (i*IMAGE_WIDTH+8, j*IMAGE_HEIGHT+8))
+            #collage.paste(images[i], (i*IMAGE_WIDTH+8, j*IMAGE_HEIGHT+8))
+        
           wandb.log({
-            "example_image": wandb.Image(imageAPI.tensor_to_image(image.squeeze(0).permute(1,2,0))),
+            "example_image": wandb.Image(collage),
           }, step=step_i)
+
+        torch.save(model.state_dict(), "./out/model_ckpt.pt")
         
       if step_i % val_every_n_steps == 0:
         val_loss = diffusion.validate(val_dataloader)
