@@ -21,6 +21,7 @@ def zero_module(module):
     """
     #for p in module.parameters():
     #    p.detach().zero_()
+    module.weight.data.zero_()
     return module
 
 class SinusoidalPositionalEncoding(nn.Module):
