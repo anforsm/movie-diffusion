@@ -10,19 +10,10 @@ import math
 
 str_to_act = defaultdict(lambda: nn.SiLU())
 str_to_act.update({
-    "relu": nn.SiLU(),
+    "relu": nn.ReLU(),
     "silu": nn.SiLU(),
     "gelu": nn.GELU(),
 })
-
-def zero_module(module):
-    """
-    Zero out the parameters of a module and return it.
-    """
-    #for p in module.parameters():
-    #    p.detach().zero_()
-    module.weight.data.zero_()
-    return module
 
 class SinusoidalPositionalEncoding(nn.Module):
     def __init__(self, dim):
@@ -39,7 +30,7 @@ class SinusoidalPositionalEncoding(nn.Module):
         return pos_enc
 
 class TimeEmbedding(nn.Module):
-    def __init__(self, model_dim: int, emb_dim: int, act="relu"):
+    def __init__(self, model_dim: int, emb_dim: int, act="silu"):
         super().__init__()
 
         self.lin = nn.Linear(model_dim, emb_dim)
@@ -53,7 +44,7 @@ class TimeEmbedding(nn.Module):
         return x
 
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, act="relu", dropout=None, zero=False):
+    def __init__(self, in_channels, out_channels, act="silu", dropout=None, zero=False):
         super().__init__()
 
         self.norm = nn.GroupNorm(
@@ -73,7 +64,7 @@ class ConvBlock(nn.Module):
             padding=1,
         )
         if zero:
-            self.conv = zero_module(self.conv)
+            self.conv.weight.data.zero_()
 
         
     def forward(self, x):
@@ -85,7 +76,7 @@ class ConvBlock(nn.Module):
         return x
 
 class EmbeddingBlock(nn.Module):
-    def __init__(self, channels: int, emb_dim: int, act="relu"):
+    def __init__(self, channels: int, emb_dim: int, act="silu"):
         super().__init__()
 
         self.act = str_to_act[act]
@@ -129,7 +120,7 @@ class ResBlock(nn.Module):
         x = x + t
 
         x = self.conv2(x)
-        x = x + self.skip_connection(original)
+        x = x# + self.skip_connection(original)
         return x
 
 class SelfAttentionBlock(nn.Module):
@@ -175,7 +166,6 @@ class Downsample(nn.Module):
     def forward(self, x):
         return self.down(x)
 
-
 class DownBlock(nn.Module):
     """According to U-Net paper
 
@@ -220,7 +210,6 @@ class DownBlock(nn.Module):
         if self.do_downsample:
             x = self.downsample(x)
         return x, residual
-
 
 class Upsample(nn.Module):
     def __init__(self, channels):
