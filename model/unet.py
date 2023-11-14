@@ -358,15 +358,18 @@ class Unet(nn.Module):
             ))
             current_channel_count = next_channel_count
 
+        last_conv = nn.Conv2d(
+            in_channels=starting_channels,
+            out_channels=image_channels,
+            kernel_size=3,
+            padding=1,
+        )
+        last_conv.weight.data.zero_()
+
         self.head = nn.Sequential(
             nn.GroupNorm(32, starting_channels),
             nn.SiLU(),
-            zero_module(nn.Conv2d(
-                in_channels=starting_channels,
-                out_channels=image_channels,
-                kernel_size=3,
-                padding=1,
-            ))
+            last_conv,
         )
 
     def forward(self, x, t):
