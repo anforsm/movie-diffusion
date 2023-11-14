@@ -50,10 +50,9 @@ class GaussianDiffusion:
     for t in range(num_diffusion_timesteps):
       t_float = float(t/num_diffusion_timesteps)
       output0 = self.sigmoid((t_float* (end-start)+start)/tau)
-      #print(f'Output1 : {output0}')
       output = (v_end-output0) / (v_end-v_start)
-      #print(f'{output} for t: {t_float}, v_start {v_start}, v_end: {v_end}')
       betas.append(np.clip(output*.2, clip_min,.2))
+    return torch.flip(torch.tensor(betas).to(self.device),dims=[0]).float()
 
   def betas_for_cosine(self,num_steps,start=0,end=1,tau=1,clip_min=1e-9):
     v_start = math.cos(start*math.pi / 2) ** (2 * tau)
