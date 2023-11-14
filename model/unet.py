@@ -120,7 +120,7 @@ class ResBlock(nn.Module):
         x = x + t
 
         x = self.conv2(x)
-        x = x# + self.skip_connection(original)
+        x = x + self.skip_connection(original)
         return x
 
 class SelfAttentionBlock(nn.Module):
