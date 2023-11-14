@@ -84,11 +84,12 @@ class GaussianDiffusion:
     return torch.randint(0, self.noise_steps, (batch_size,)).to(self.device)
   
   def to(self,device):
+    #print(device)
     self.device = device
     self.betas = self.betas.to(device)
     self.alphas = self.alphas.to(device)
     self.alpha_hat = self.alpha_hat.to(device)
-
+    return self
   
   def q(self, x, t):
     """
@@ -171,19 +172,52 @@ class GaussianDiffusion:
 
     return x_t_minus_1
   
-  def sample(self, num_samples, show_progress=True):
+  def sample(self, num_samples, show_progress=True,x0=None):
     """
     Sample from the model
     """
+    
     self.model.eval()
     image_versions = []
+
     with torch.no_grad():
-      x = torch.randn(num_samples, self.channels, *self.image_size).to(self.device)
+      x = torch.randn(num_samples, self.channels, *self.image_size)
+      
+      x0 = x0.to(self.device)
+      x = x.to(self.device)
+      
+      #print(x)
+      if x0 is not None:
+        #x = torch.randn(1, 3, 192, 128, dtype=torch.float64)
+        mask = x0 != -1
+
+        x_noised = self.apply_noise(x0, self.noise_steps - 1)[0].to(self.device)
+        new_x = x
+        new_x[mask] = x_noised[mask]
+
+        #assert all(torch.isclose(new_x, x).tolist())
+        x = new_x
+
+      #print(x)
       it = reversed(range(1, self.noise_steps))
       if show_progress:
         it = tqdm(it)
       for t in it:
         image_versions.append(self.denormalize_image(torch.clip(x, -1, 1)).clone().squeeze(0))
+
+        if x0 is not None and t > 300:
+          #x = torch.randn(1, 3, 192, 128, dtype=torch.float64)
+          #mask = x0 != -1
+
+          x_noised = self.apply_noise(x0, t)[0]
+
+          new_x = x
+          new_x[mask] = x_noised[mask]
+
+          #assert all(torch.isclose(new_x, x).tolist())
+          x = new_x
+
+          
         x = self.sample_step(x, t)
     self.model.train()
     x = torch.clip(x, -1.0, 1.0)
