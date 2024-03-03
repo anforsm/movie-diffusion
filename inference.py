@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from denoising_diffusion_pytorch import Unet, GaussianDiffusion, Trainer
 
-if __name__ == "__main__":
+def inference():
   # load pt model
   model = Unet(
       dim = 64,
@@ -26,7 +26,6 @@ if __name__ == "__main__":
       ema_decay = 0.995,                # exponential moving average decay
       calculate_fid = True              # whether to calculate fid during training
   )
-  trainer.load("cifar10_32x32")
   samples_images = diffusion.sample(batch_size=16)
   
   def show(img, i):

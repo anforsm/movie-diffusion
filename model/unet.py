@@ -390,6 +390,8 @@ class Unet(nn.Module):
             residuals.append(residual)
 
         x = self.bottleneck(x, t)
+        #print("going up")
+        #print([r.shape for r in residuals])
 
         for expansive_block in self.expansive_path:
             # Add the residual
