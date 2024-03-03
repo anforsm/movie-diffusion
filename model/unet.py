@@ -227,6 +227,22 @@ class Upsample(nn.Module):
         x = self.conv(x)
         return x
 
+class Upsample(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.upsample = nn.Upsample(scale_factor=2)
+        self.conv = nn.Conv2d(
+            in_channels=channels,
+            out_channels=channels,
+            kernel_size=3,
+            padding=1,
+        )
+    
+    def forward(self, x):
+        x = self.upsample(x)
+        x = self.conv(x)
+        return x
+
 class UpBlock(nn.Module):
     """According to U-Net paper
 
@@ -387,6 +403,8 @@ class Unet(nn.Module):
             residuals.append(residual)
 
         x = self.bottleneck(x, t)
+        #print("going up")
+        #print([r.shape for r in residuals])
 
         for expansive_block in self.expansive_path:
             # Add the residual
