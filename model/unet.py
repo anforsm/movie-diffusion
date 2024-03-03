@@ -227,22 +227,6 @@ class Upsample(nn.Module):
         x = self.conv(x)
         return x
 
-class Upsample(nn.Module):
-    def __init__(self, channels):
-        super().__init__()
-        self.upsample = nn.Upsample(scale_factor=2)
-        self.conv = nn.Conv2d(
-            in_channels=channels,
-            out_channels=channels,
-            kernel_size=3,
-            padding=1,
-        )
-    
-    def forward(self, x):
-        x = self.upsample(x)
-        x = self.conv(x)
-        return x
-
 class UpBlock(nn.Module):
     """According to U-Net paper
 
@@ -326,6 +310,9 @@ class Unet(nn.Module):
     ):
         super().__init__()
         self.is_conditional = False
+        #channel_mults = (1, 2, 2, 2)
+        #attention_layers = (False, False, True, False)
+        #res_block_width=3
 
         self.image_channels = image_channels
         self.starting_channels = starting_channels
@@ -424,7 +411,7 @@ class ConditionalUnet(nn.Module):
         self.unet = unet
         self.num_classes = num_classes
 
-        self.class_embedding = nn.Embedding(num_classes, unet.starting_channels)
+        self.class_embedding = nn.Embedding(num_classes + 1, unet.starting_channels, padding_idx=0)
     
     def forward(self, x, t, cond=None):
         # cond: (batch_size, n), where n is the number of classes that we are conditioning on

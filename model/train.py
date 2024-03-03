@@ -43,13 +43,14 @@ def collate_fn(batch):
   processed_images = []
   labels = []
   for image in batch:
-      img = image_transform(image[HF_IMAGE_KEY])
-      #img = torch.tensor(image[HF_IMAGE_KEY])
-      cond = torch.tensor([image["label"]], dtype=torch.int64)
+      #img = image_transform(image[HF_IMAGE_KEY])
+      img = torch.tensor(image[HF_IMAGE_KEY])
+      cond = torch.nn.functional.pad(torch.tensor(image["genres"], dtype=torch.int64) + 1, (0, 14-len(image["genres"])), "constant", value=0)
       if img.shape[0] == 1:  # Check if the image is grayscale
           img = img.repeat(3, 1, 1)  # Convert to RGB by repeating the single channel
       processed_images.append(img)
       labels.append(cond)
+      
   
   return torch.stack(processed_images), torch.stack(labels)
   #return torch.stack([image_transform(image[HF_IMAGE_KEY]) for image in batch])
@@ -77,7 +78,7 @@ def train():
     image_channels=3,
     dropout=DROPOUT,
   )
-  model = ConditionalUnet(model, num_classes=10)
+  model = ConditionalUnet(model, num_classes=13)
 
   
   # use height of image if not square
@@ -151,6 +152,11 @@ def train():
       acc_loss += loss.item()
 
 
+      del loss
+      del predicted_noise_added_to_image
+      del noise_added_to_image
+      del noisy_image
+
       if step_i % loss_every_n_steps == 0:
         acc_loss /= loss_every_n_steps
         pbar.set_description(f"Loss: {acc_loss:.4f}")
@@ -166,20 +172,25 @@ def train():
       
       if step_i % image_every_n_steps == 0:
         if LOG_WANDB:
-          images, _ = diffusion.sample(4, show_progress=False)
+          num_images = 4
+          images_per_row = int(np.sqrt(num_images))
+          images, _ = diffusion.sample(num_images, show_progress=False)
           images = [imageAPI.tensor_to_image(image.squeeze(0).permute(1,2,0)) for image in images]
           # convert images to single image with 4x4 grid with some padding
-          collage = Image.new('RGB', (IMAGE_WIDTH*2+16, IMAGE_HEIGHT*2+16), (255, 255, 255))
+          collage = Image.new('RGB', (IMAGE_WIDTH*images_per_row+16, IMAGE_HEIGHT*images_per_row+16), (255, 255, 255))
           #collage = Image.new('RGB', (IMAGE_WIDTH*2+16, IMAGE_HEIGHT), (0, 0, 0))
-          for i in range(2):
+          for i in range(images_per_row):
             #j = 0
-            for j in range(2):
-              collage.paste(images[i*2+j], (i*IMAGE_WIDTH+8, j*IMAGE_HEIGHT+8))
+            for j in range(images_per_row):
+              collage.paste(images[i*images_per_row+j], (i*IMAGE_WIDTH+8, j*IMAGE_HEIGHT+8))
             #collage.paste(images[i], (i*IMAGE_WIDTH+8, j*IMAGE_HEIGHT+8))
         
           wandb.log({
             "example_image": wandb.Image(collage),
           }, step=step_i)
+
+          del collage
+          del images
 
         torch.save(model.state_dict(), "./out/model_ckpt.pt")
         
