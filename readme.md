@@ -24,6 +24,6 @@ These are 2x2 collages of movie posters.
 ### Inpainting
 These are posters which have been inpainted in different ways.
 
-![Inpainting](./samples/inpainting1.png)
-![Inpainting](./samples/inpainting2.png)
-![Inpainting](./samples/inpainting3.png)
+![Inpainting](./samples/Inpainting1.png)
+![Inpainting](./samples/Inpainting2.png)
+![Inpainting](./samples/Inpainting3.png)
