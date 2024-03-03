@@ -1,5 +1,5 @@
 """
-Various utilities for neural networks.
+Various utilities for neural networks. From openai/improved-diffusion
 """
 
 import math

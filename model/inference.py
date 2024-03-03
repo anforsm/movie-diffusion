@@ -8,11 +8,13 @@ from unet import Unet
 from diffusion import GaussianDiffusion, DiffusionImageAPI
 from data import ImageDataset
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 def inference():
   model = Unet(
     image_channels=3,
   )
-  model.load_state_dict(torch.load("./out/model.pt"))
+  model.load_state_dict(torch.load("./model_final.pt", map_location=device))
 
   diffusion = GaussianDiffusion(
     model=model,
@@ -25,6 +27,8 @@ def inference():
   )
 
   imageAPI = DiffusionImageAPI(diffusion)
+  model.to(device)
+  diffusion.to(device)
 
   images, versions = diffusion.sample(1)
   #if not isinstance(images, list):

@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 from tqdm import tqdm
 from PIL import Image
+from einops import rearrange
 import math 
 class GaussianDiffusion:
   def __init__(self, model, noise_steps, beta_0, beta_T, image_size, channels=3, schedule="linear"):
@@ -34,24 +35,10 @@ class GaussianDiffusion:
     if schedule == "linear":
       return torch.linspace(self.beta_0, self.beta_T, self.noise_steps).to(self.device)
     elif schedule == "cosine":
-        return self.betas_for_cosine(self.noise_steps)
+      return self.betas_for_cosine(self.noise_steps)
     elif schedule == "sigmoid":
       return self.betas_for_sigmoid(self.noise_steps)
-    else:
-      raise NotImplementedError
-
-
-  def betas_for_cosine(self,num_steps,start=0,end=1,tau=1,clip_min=1e-9):
-    v_start = math.cos(start*math.pi / 2) ** (2 * tau)
-    betas = []
-    v_end = math.cos(end* math.pi/2) ** 2*tau
-    for t in range(num_steps):
-      t_float = float(t)/num_steps
-      output = math.cos((t_float* (end-start)+start)*math.pi/2)**(2*tau)
-      output = (v_end - output) / (v_end-v_start)
-      betas.append(np.clip(output*.2,clip_min,.2))
-    return torch.flip(torch.tensor(betas).to(self.device),dims=[0]).float()
-
+  
   @staticmethod 
   def sigmoid(x):
     return 1 / (1 + np.exp(-x))
@@ -63,21 +50,20 @@ class GaussianDiffusion:
     for t in range(num_diffusion_timesteps):
       t_float = float(t/num_diffusion_timesteps)
       output0 = self.sigmoid((t_float* (end-start)+start)/tau)
-      #print(f'Output1 : {output0}')
       output = (v_end-output0) / (v_end-v_start)
-      #print(f'{output} for t: {t_float}, v_start {v_start}, v_end: {v_end}')
       betas.append(np.clip(output*.2, clip_min,.2))
-
     return torch.flip(torch.tensor(betas).to(self.device),dims=[0]).float()
 
-  def betas_for_alpha_bar(self,num_diffusion_timesteps, alpha_bar, max_beta=0.999):
-
+  def betas_for_cosine(self,num_steps,start=0,end=1,tau=1,clip_min=1e-9):
+    v_start = math.cos(start*math.pi / 2) ** (2 * tau)
     betas = []
-    for i in range(num_diffusion_timesteps):
-        t1 = i / num_diffusion_timesteps
-        t2 = (i + 1) / num_diffusion_timesteps
-        betas.append(min(1 - alpha_bar(t2) / alpha_bar(t1), max_beta))
-    return torch.tensor(betas).to(self.device)
+    v_end = math.cos(end* math.pi/2) ** 2*tau
+    for t in range(num_steps):
+      t_float = float(t)/num_steps
+      output = math.cos((t_float* (end-start)+start)*math.pi/2)**(2*tau)
+      output = (v_end - output) / (v_end-v_start)
+      betas.append(np.clip(output*.2,clip_min,.2))
+    return torch.flip(torch.tensor(betas).to(self.device),dims=[0]).float()
   
 
   def sample_time_steps(self, batch_size=1):
@@ -147,7 +133,7 @@ class GaussianDiffusion:
     # denormalize image to [0, 255]
     return (x + 1.0) / 2.0 * 255.0
   
-  def sample_step(self, x, t):
+  def sample_step(self, x, t, cond):
     batch_size = x.shape[0]
     device = x.device
     z = torch.randn_like(x) if t >= 1 else torch.zeros_like(x)
@@ -166,7 +152,10 @@ class GaussianDiffusion:
     # std = torch.sqrt(beta_hat)
     std = torch.sqrt(beta)
     # mean + variance * z
-    predicted_noise = self.model(x, torch.tensor([t]).repeat(batch_size).to(device))
+    if cond is not None:
+      predicted_noise = self.model(x, torch.tensor([t]).repeat(batch_size).to(device), cond)
+    else:
+      predicted_noise = self.model(x, torch.tensor([t]).repeat(batch_size).to(device))
     mean = one_over_sqrt_alpha * (x - one_minus_alpha / sqrt_one_minus_alpha_hat * predicted_noise)
     x_t_minus_1 = mean + std * z
 
@@ -176,49 +165,24 @@ class GaussianDiffusion:
     """
     Sample from the model
     """
-    
+    cond = None
+    if self.model.is_conditional:
+      # cond is arange()
+      assert num_samples <= self.model.num_classes, "num_samples must be less than or equal to the number of classes"
+      cond = torch.arange(self.model.num_classes)[:num_samples].to(self.device)
+      cond = rearrange(cond, 'i -> i ()')
+
     self.model.eval()
     image_versions = []
 
     with torch.no_grad():
-      x = torch.randn(num_samples, self.channels, *self.image_size)
-      
-      x0 = x0.to(self.device)
-      x = x.to(self.device)
-      
-      #print(x)
-      if x0 is not None:
-        #x = torch.randn(1, 3, 192, 128, dtype=torch.float64)
-        mask = x0 != -1
-
-        x_noised = self.apply_noise(x0, self.noise_steps - 1)[0].to(self.device)
-        new_x = x
-        new_x[mask] = x_noised[mask]
-
-        #assert all(torch.isclose(new_x, x).tolist())
-        x = new_x
-
-      #print(x)
+      x = torch.randn(num_samples, self.channels, *self.image_size).to(self.device)
       it = reversed(range(1, self.noise_steps))
       if show_progress:
         it = tqdm(it)
       for t in it:
         image_versions.append(self.denormalize_image(torch.clip(x, -1, 1)).clone().squeeze(0))
-
-        if x0 is not None and t > 300:
-          #x = torch.randn(1, 3, 192, 128, dtype=torch.float64)
-          #mask = x0 != -1
-
-          x_noised = self.apply_noise(x0, t)[0]
-
-          new_x = x
-          new_x[mask] = x_noised[mask]
-
-          #assert all(torch.isclose(new_x, x).tolist())
-          x = new_x
-
-          
-        x = self.sample_step(x, t)
+        x = self.sample_step(x, t, cond)
     self.model.train()
     x = torch.clip(x, -1.0, 1.0)
     return self.denormalize_image(x), image_versions
@@ -230,12 +194,13 @@ class GaussianDiffusion:
     self.model.eval()
     acc_loss = 0
     with torch.no_grad():
-      for batch in dataloader:
-        t = self.sample_time_steps(batch_size=batch.shape[0])
-        noisy_image, added_noise = self.apply_noise(batch, t)
+      for (image, cond) in dataloader:
+        t = self.sample_time_steps(batch_size=image.shape[0])
+        noisy_image, added_noise = self.apply_noise(image, t)
         noisy_image = noisy_image.to(self.device)
         added_noise = added_noise.to(self.device)
-        predicted_noise = self.model(noisy_image, t)
+        cond = cond.to(self.device)
+        predicted_noise = self.model(noisy_image, t, cond)
         loss = nn.MSELoss()(predicted_noise, added_noise)
         acc_loss += loss.item()
     self.model.train()
