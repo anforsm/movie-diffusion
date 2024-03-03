@@ -1,6 +1,8 @@
 from typing import Any
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from einops import rearrange
 from collections import defaultdict
 import torch as th
 import numpy as np
@@ -8,18 +10,10 @@ import math
 
 str_to_act = defaultdict(lambda: nn.SiLU())
 str_to_act.update({
-    "relu": nn.SiLU(),
+    "relu": nn.ReLU(),
     "silu": nn.SiLU(),
     "gelu": nn.GELU(),
 })
-
-def zero_module(module):
-    """
-    Zero out the parameters of a module and return it.
-    """
-    for p in module.parameters():
-        p.detach().zero_()
-    return module
 
 class SinusoidalPositionalEncoding(nn.Module):
     def __init__(self, dim):
@@ -36,7 +30,7 @@ class SinusoidalPositionalEncoding(nn.Module):
         return pos_enc
 
 class TimeEmbedding(nn.Module):
-    def __init__(self, model_dim: int, emb_dim: int, act="relu"):
+    def __init__(self, model_dim: int, emb_dim: int, act="silu"):
         super().__init__()
 
         self.lin = nn.Linear(model_dim, emb_dim)
@@ -49,9 +43,8 @@ class TimeEmbedding(nn.Module):
         x = self.lin2(x)
         return x
 
-
 class ConvBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, act="relu", dropout=None, zero=False):
+    def __init__(self, in_channels, out_channels, act="silu", dropout=None, zero=False):
         super().__init__()
 
         self.norm = nn.GroupNorm(
@@ -71,7 +64,7 @@ class ConvBlock(nn.Module):
             padding=1,
         )
         if zero:
-            self.conv = zero_module(self.conv)
+            self.conv.weight.data.zero_()
 
         
     def forward(self, x):
@@ -83,7 +76,7 @@ class ConvBlock(nn.Module):
         return x
 
 class EmbeddingBlock(nn.Module):
-    def __init__(self, channels: int, emb_dim: int, act="relu"):
+    def __init__(self, channels: int, emb_dim: int, act="silu"):
         super().__init__()
 
         self.act = str_to_act[act]
@@ -106,7 +99,6 @@ class ResBlock(nn.Module):
         
         self.emb = EmbeddingBlock(out_channels, emb_dim) 
 
-        #self.dropout = nn.Dropout(dropout)
         self.conv2 = ConvBlock(out_channels, out_channels, dropout=dropout, zero=True)
 
         if channels != out_channels:
@@ -127,98 +119,34 @@ class ResBlock(nn.Module):
 
         x = x + t
 
-        #x = self.dropout(x)
         x = self.conv2(x)
         x = x + self.skip_connection(original)
         return x
 
 class SelfAttentionBlock(nn.Module):
-    """
-    An attention block that allows spatial positions to attend to each other.
-
-    Originally ported from here, but adapted to the N-d case.
-    https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/models/unet.py#L66.
-    """
-
-    def __init__(self, channels, num_heads=1, use_checkpoint=False):
+    def __init__(self, channels, num_heads=1):
         super().__init__()
         self.channels = channels
         self.num_heads = num_heads
-        self.use_checkpoint = use_checkpoint
-
+        
         self.norm = nn.GroupNorm(32, channels)
-        # not sure why openai is using conv1d instead of linear layer
-        self.qkv = nn.Conv1d(channels, channels * 3, 1)
-        #self.qkv = nn.Linear(channels, 3 * channels)
-        self.attention = QKVAttention()
-        self.proj_out = zero_module(
-            # again, not sure why openai is using kernel 1 conv1d
-            nn.Conv1d(channels, channels, 1)
-            #nn.Linear(channels, channels),
-        )
 
-    def forward(self, x):
-        b, c, *spatial = x.shape
-        # batch size, channel dim, width, height
-        x = x.reshape(b, c, -1)
-        # we want to convert 2d image to 1d sequence
-        # x: batch size, channel dim, width * height
-        qkv = self.qkv(self.norm(x))
-        # get Q, K, V matrices
-
-        # qkv: batch size, channel dim * 3, width * height ?
-        qkv = qkv.reshape(b * self.num_heads, -1, qkv.shape[2])
-        # qkv: batch size * num heads, channel dim * 3, width * height ?
-
-        # simple attn operation: attn = softmax(qk^T / sqrt(d)) v
-        h = self.attention(qkv)
-
-        # h: batch size * num heads, width * height, channel dim ?
-        h = h.reshape(b, -1, h.shape[-1])
-        # h: batch size, width * height, channel dim * num heads ?
-        h = self.proj_out(h)
-        # uses an additory residual connection
-        return (x + h).reshape(b, c, *spatial)
-
-
-class QKVAttention(nn.Module):
-    """
-    A module which performs QKV attention.
-    """
-
-    def forward(self, qkv):
-        """
-        Apply QKV attention.
-
-        :param qkv: an [N x (C * 3) x T] tensor of Qs, Ks, and Vs.
-        :return: an [N x C x T] tensor after attention.
-        """
-        ch = qkv.shape[1] // 3
-        q, k, v = th.split(qkv, ch, dim=1)
-        scale = 1 / math.sqrt(math.sqrt(ch))
-        weight = th.einsum(
-            "bct,bcs->bts", q * scale, k * scale
-        )  # More stable with f16 than dividing afterwards
-        weight = th.softmax(weight.float(), dim=-1).type(weight.dtype)
-        return th.einsum("bts,bcs->bct", weight, v)
-
-class SelfAttentionBlockOld(nn.Module):
-    def __init__(self, channels: int):
-        super().__init__()
-        self.transformer = nn.TransformerEncoderLayer(
-            d_model=channels,
-            nhead=1,
+        self.attention = nn.MultiheadAttention(
+            embed_dim=channels,
+            num_heads=num_heads,
             dropout=0,
-            activation="relu",
             batch_first=True,
+            bias=True,
         )
     
     def forward(self, x):
-        # x: (batch_size, channels, height, width)
-        batch_size, channels, height, width = x.shape
-        x = x.view(batch_size, channels, -1).swapaxes(1, 2)
-        x = self.transformer(x)
-        return x.swapaxes(1, 2).view(batch_size, channels, height, width)
+        h, w = x.shape[-2:]
+        original = x
+        x = self.norm(x)
+        x = rearrange(x, "b c h w -> b (h w) c")
+        x = self.attention(x, x, x)[0]
+        x = rearrange(x, "b (h w) c -> b c h w", h=h, w=w)
+        return x + original
 
 class Downsample(nn.Module):
     def __init__(self, channels):
@@ -238,7 +166,6 @@ class Downsample(nn.Module):
     def forward(self, x):
         return self.down(x)
 
-
 class DownBlock(nn.Module):
     """According to U-Net paper
 
@@ -255,8 +182,6 @@ class DownBlock(nn.Module):
         self.use_attn = use_attn
         self.do_downsample = downsample
 
-        #print(f"DownBlock: {in_channels} -> {out_channels}")
-
         self.blocks = nn.ModuleList()
         for _ in range(width):
             self.blocks.append(ResBlock(
@@ -271,36 +196,36 @@ class DownBlock(nn.Module):
                 ))
             in_channels = out_channels
 
-        #self.resblock = ResBlock(
-        #    channels=in_channels,
-        #    out_channels=out_channels,
-        #    emb_dim=time_embedding_dim,
-        #    dropout=dropout,
-        #)
-
-        #if self.use_attn:
-        #    self.attn = SelfAttentionBlock(
-        #        channels=out_channels,
-        #    )
-
         if self.do_downsample:
             self.downsample = Downsample(out_channels) 
 
     def forward(self, x, t):
-        #x = self.resblock(x, t)
-
-        #if self.use_attn:
-        #    x = self.attn(x)
         for block in self.blocks:
             if isinstance(block, ResBlock):
                 x = block(x, t)
             elif isinstance(block, SelfAttentionBlock):
                 x = block(x)
 
+        residual = x
         if self.do_downsample:
             x = self.downsample(x)
-        return x
+        return x, residual
 
+class Upsample(nn.Module):
+    def __init__(self, channels):
+        super().__init__()
+        self.upsample = nn.Upsample(scale_factor=2)
+        self.conv = nn.Conv2d(
+            in_channels=channels,
+            out_channels=channels,
+            kernel_size=3,
+            padding=1,
+        )
+    
+    def forward(self, x):
+        x = self.upsample(x)
+        x = self.conv(x)
+        return x
 
 class Upsample(nn.Module):
     def __init__(self, channels):
@@ -334,8 +259,6 @@ class UpBlock(nn.Module):
         self.use_attn = use_attn
         self.do_upsample = upsample
 
-        #print(f"UpBlock: {in_channels} -> {out_channels}")
-
         self.blocks = nn.ModuleList()
         for _ in range(width):
             self.blocks.append(ResBlock(
@@ -350,26 +273,10 @@ class UpBlock(nn.Module):
                 ))
             in_channels = out_channels
 
-        #self.resblock = ResBlock(
-        #    channels=in_channels,
-        #    out_channels=out_channels,
-        #    emb_dim=time_embedding_dim,
-        #    dropout=dropout,
-        #)
-
-        #if self.use_attn:
-        #    self.attn = SelfAttentionBlock(
-        #        channels=out_channels,
-        #    )
-        
         if self.do_upsample:
             self.upsample = Upsample(out_channels)
 
-    def forward(self, x, t, residual=None):
-        #x = self.resblock(x, t)
-
-        #if self.use_attn:
-        #    x = self.attn(x)
+    def forward(self, x, t):
         for block in self.blocks:
             if isinstance(block, ResBlock):
                 x = block(x, t)
@@ -410,110 +317,75 @@ class Bottleneck(nn.Module):
 class Unet(nn.Module):
     def __init__(
         self,
-        image_channels,
-        time_embedding_dim=128,
+        image_channels=3,
+        res_block_width=2,
+        starting_channels=128,
         dropout=0,
+        channel_mults=(1, 2, 2, 4, 4),
+        attention_layers=(False, False, False, True, False)
     ):
         super().__init__()
         self.is_conditional = False
 
-        res_block_width = 2
-        starting_channels = 128
+        self.image_channels = image_channels
         self.starting_channels = starting_channels
         time_embedding_dim = 4 * starting_channels
-        C = starting_channels
 
-        self.image_channels = image_channels
-        self.time_encoding = SinusoidalPositionalEncoding(dim=C)
-        self.time_embedding = TimeEmbedding(model_dim=C, emb_dim=time_embedding_dim)
+        self.time_encoding = SinusoidalPositionalEncoding(dim=starting_channels)
+        self.time_embedding = TimeEmbedding(model_dim=starting_channels, emb_dim=time_embedding_dim)
 
-        #self.input = ConvBlock(3, C)
+        self.input = nn.Conv2d(3, starting_channels, kernel_size=3, padding=1)
 
-        #channel_mults = (1, 2, 4, 8)
-        #channel_mults = (1, 2, 4, 8)
-        #channel_mults = (1, 2)
-        channel_mults = (1, 2, 2, 4, 4)
+        current_channel_count = starting_channels
 
-        # Wide U-Net, i.e. num channels are increased as we celntract
+        input_channel_counts = []
+        self.contracting_path = nn.ModuleList([])
+        for i, channel_multiplier in enumerate(channel_mults):
+            is_last_layer = i == len(channel_mults) - 1
+            next_channel_count = channel_multiplier * starting_channels
 
-        use_attn = [
-            False,
-            False, 
-            False,
-            #False, 
-            #True,
-            #True,
-            True,
-            False,
-        ]
-
-        self.contracting_path = nn.ModuleList(
-            [
-                nn.Conv2d(3, C, kernel_size=3, padding=1)
-            ]
-        )
-        input_chs = []
-        ch = C
-        dimensions = 1
-        for i, mult in enumerate(channel_mults):
             self.contracting_path.append(DownBlock(
-                in_channels=ch,
-                out_channels=mult * C,
+                in_channels=current_channel_count,
+                out_channels=next_channel_count,
                 time_embedding_dim=time_embedding_dim,
-                use_attn=use_attn[i],
+                use_attn=attention_layers[i],
                 dropout=dropout,
-                downsample=False,
+                downsample=not is_last_layer,
                 width=res_block_width,
             ))
-            ch = mult * C
-            input_chs.append(ch)
-            if i != len(channel_mults) - 1:
-                self.contracting_path.append(Downsample(ch))
-                dimensions *= 2
+            current_channel_count = next_channel_count 
 
-        #for i, ((in_channels, out_channels), attn) in enumerate(zip(channels_list_down, use_attn)):
-        #    self.contracting_path.append(DownBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout, downsample=False, width=res_block_width))
-        #    if i != len(channels_list_down) - 1:
-        #        self.contracting_path.append(Downsample(out_channels))
+            input_channel_counts.append(current_channel_count)
 
-        #self.bottleneck = Bottleneck(channels=channels_list_down[-1][-1], time_embedding_dim=time_embedding_dim, dropout=dropout) 
-        self.bottleneck = Bottleneck(channels=ch, time_embedding_dim=time_embedding_dim, dropout=dropout) 
-        #print("input chs", input_chs)
+        self.bottleneck = Bottleneck(channels=current_channel_count, time_embedding_dim=time_embedding_dim, dropout=dropout) 
 
-        self.expansive_path = nn.ModuleList(
-            [
-                # multiply by 2 since we concatenate the channels from the contracting path
-                # also because of bottleneck doubling the channels
-                #UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=attn, dropout=dropout, upsample=i != 0)
-                #for i, ((in_channels, out_channels), attn) in enumerate(zip(channels_list_up, reversed(use_attn)))
+        self.expansive_path = nn.ModuleList([])
+        for i, channel_multiplier in enumerate(reversed(channel_mults)):
+            next_channel_count = channel_multiplier * starting_channels
 
-                # UpBlock(in_channels=in_channels, out_channels=out_channels, time_embedding_dim=time_embedding_dim, use_attn=False, dropout=dropout, upsample=i != 0 and i % 2 == 1 and i != len(channels_list_up) - 1)
-                # for i, (in_channels, out_channels) in enumerate(channels_list_up)
-            ]
-        )
-        for i, mult in enumerate(reversed(channel_mults)):
             self.expansive_path.append(UpBlock(
-                in_channels=ch + input_chs.pop(),
-                out_channels=mult * C,
+                in_channels=current_channel_count + input_channel_counts.pop(),
+                out_channels=next_channel_count,
                 time_embedding_dim=time_embedding_dim,
-                use_attn=list(reversed(use_attn))[i],
+                use_attn=list(reversed(attention_layers))[i],
                 dropout=dropout,
-                #upsample=i != 0 and i != len(channel_mults) - 1,# and i % 2 == 1,# and i != len(channel_mults) - 1,
-                #upsample=i != 0,
                 upsample=i != len(channel_mults) - 1,
                 width=res_block_width,
             ))
-            ch = mult * C
+            current_channel_count = next_channel_count
+
+        last_conv = nn.Conv2d(
+            in_channels=starting_channels,
+            out_channels=image_channels,
+            kernel_size=3,
+            padding=1,
+        )
+        last_conv.weight.data.zero_()
 
         self.head = nn.Sequential(
             nn.GroupNorm(32, starting_channels),
             nn.SiLU(),
-            zero_module(nn.Conv2d(
-                in_channels=starting_channels,
-                out_channels=image_channels,
-                kernel_size=3,
-                padding=1,
-            ))
+            last_conv,
         )
 
     def forward(self, x, t):
@@ -521,50 +393,27 @@ class Unet(nn.Module):
         return self._forward(x, t)
 
     def _forward(self, x, t):
-        # If using torchvision totensor, we do not need to swap axes
-        # x: (batch_size, height, width, channels)
-        #x = torch.einsum("bhwc->bchw", x)
-        # x: (batch_size, channels, height, width)
         t = self.time_embedding(t)
 
-        #x = self.input(x)
+        x = self.input(x)
 
         residuals = []
-        # x: (1, 3, 120, 80)
-        # x: (1, 64, 120, 80)
-        # x: (1, 128, 60, 40)
-        # x: (1, 256, 30, 20)
-        # x: (1, 512, 15, 10)
         for contracting_block in self.contracting_path:
-            if isinstance(contracting_block, Downsample) or isinstance(contracting_block, nn.Conv2d):
-                x = contracting_block(x)
-            else:
-                x = contracting_block(x, t)
-                #print(x.shape)
-                residuals.append(x)
+            x, residual = contracting_block(x, t)
+            residuals.append(residual)
 
         x = self.bottleneck(x, t)
         #print("going up")
         #print([r.shape for r in residuals])
 
-        #for expansive_block, residual in zip(
-        #    self.expansive_path, reversed(residuals)
-        #):
         for expansive_block in self.expansive_path:
-            if isinstance(expansive_block, UpBlock):
-                residual = residuals.pop()
-                #print(f"residual shape: {residual.shape}")
-                #print(f"expansive_block shape: {x.shape}")
-                x = torch.cat([x, residual], dim=1)
-                x = expansive_block(x, t)
-            else:
-                x = expansive_block(x, t)
+            # Add the residual
+            residual = residuals.pop()
+            x = torch.cat([x, residual], dim=1)
+
+            x = expansive_block(x, t)
 
         x = self.head(x)
-        # x: (1, 3, 120, 80)
-        #x = torch.einsum("bchw->bhwc", x)
-        # x: (1, 120, 80, 3)
-        #print("last", x.shape)
         return x
 
 class ConditionalUnet(nn.Module):

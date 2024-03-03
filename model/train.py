@@ -20,6 +20,8 @@ from conf import LOG_WANDB, IMAGE_WIDTH, IMAGE_HEIGHT, BATCH_SIZE, DEVICE, HF_TR
 if LOG_WANDB:
   import wandb
 
+torch.manual_seed(0)
+
 IMAGE_DIM_TO_CHANNEL_MULT = {
   32: (1,2,2,2),
   64: (1,2,2,2),

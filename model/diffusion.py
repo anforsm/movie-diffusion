@@ -35,20 +35,35 @@ class GaussianDiffusion:
     if schedule == "linear":
       return torch.linspace(self.beta_0, self.beta_T, self.noise_steps).to(self.device)
     elif schedule == "cosine":
-        return self.betas_for_alpha_bar(
-            self.noise_steps,
-            lambda t: math.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2,
-        )
-      
+      return self.betas_for_cosine(self.noise_steps)
+    elif schedule == "sigmoid":
+      return self.betas_for_sigmoid(self.noise_steps)
+  
+  @staticmethod 
+  def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
 
-  def betas_for_alpha_bar(self,num_diffusion_timesteps, alpha_bar, max_beta=0.999):
-
+  def betas_for_sigmoid(self, num_diffusion_timesteps, start=-3,end=3, tau=1.0, clip_min = 1e-9):
     betas = []
-    for i in range(num_diffusion_timesteps):
-        t1 = i / num_diffusion_timesteps
-        t2 = (i + 1) / num_diffusion_timesteps
-        betas.append(min(1 - alpha_bar(t2) / alpha_bar(t1), max_beta))
-    return torch.tensor(betas).to(self.device)
+    v_start = self.sigmoid(start/tau)
+    v_end = self.sigmoid(end/tau)
+    for t in range(num_diffusion_timesteps):
+      t_float = float(t/num_diffusion_timesteps)
+      output0 = self.sigmoid((t_float* (end-start)+start)/tau)
+      output = (v_end-output0) / (v_end-v_start)
+      betas.append(np.clip(output*.2, clip_min,.2))
+    return torch.flip(torch.tensor(betas).to(self.device),dims=[0]).float()
+
+  def betas_for_cosine(self,num_steps,start=0,end=1,tau=1,clip_min=1e-9):
+    v_start = math.cos(start*math.pi / 2) ** (2 * tau)
+    betas = []
+    v_end = math.cos(end* math.pi/2) ** 2*tau
+    for t in range(num_steps):
+      t_float = float(t)/num_steps
+      output = math.cos((t_float* (end-start)+start)*math.pi/2)**(2*tau)
+      output = (v_end - output) / (v_end-v_start)
+      betas.append(np.clip(output*.2,clip_min,.2))
+    return torch.flip(torch.tensor(betas).to(self.device),dims=[0]).float()
   
 
   def sample_time_steps(self, batch_size=1):
