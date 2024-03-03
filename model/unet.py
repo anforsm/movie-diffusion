@@ -310,6 +310,9 @@ class Unet(nn.Module):
     ):
         super().__init__()
         self.is_conditional = False
+        #channel_mults = (1, 2, 2, 2)
+        #attention_layers = (False, False, True, False)
+        #res_block_width=3
 
         self.image_channels = image_channels
         self.starting_channels = starting_channels
@@ -387,6 +390,8 @@ class Unet(nn.Module):
             residuals.append(residual)
 
         x = self.bottleneck(x, t)
+        #print("going up")
+        #print([r.shape for r in residuals])
 
         for expansive_block in self.expansive_path:
             # Add the residual
@@ -406,7 +411,7 @@ class ConditionalUnet(nn.Module):
         self.unet = unet
         self.num_classes = num_classes
 
-        self.class_embedding = nn.Embedding(num_classes, unet.starting_channels)
+        self.class_embedding = nn.Embedding(num_classes + 1, unet.starting_channels, padding_idx=0)
     
     def forward(self, x, t, cond=None):
         # cond: (batch_size, n), where n is the number of classes that we are conditioning on

@@ -70,11 +70,12 @@ class GaussianDiffusion:
     return torch.randint(0, self.noise_steps, (batch_size,)).to(self.device)
   
   def to(self,device):
+    #print(device)
     self.device = device
     self.betas = self.betas.to(device)
     self.alphas = self.alphas.to(device)
     self.alpha_hat = self.alpha_hat.to(device)
-
+    return self
   
   def q(self, x, t):
     """
@@ -160,7 +161,7 @@ class GaussianDiffusion:
 
     return x_t_minus_1
   
-  def sample(self, num_samples, show_progress=True):
+  def sample(self, num_samples, show_progress=True,x0=None):
     """
     Sample from the model
     """
@@ -173,6 +174,7 @@ class GaussianDiffusion:
 
     self.model.eval()
     image_versions = []
+
     with torch.no_grad():
       x = torch.randn(num_samples, self.channels, *self.image_size).to(self.device)
       it = reversed(range(1, self.noise_steps))
